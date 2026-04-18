@@ -119,6 +119,40 @@ factors:
       - [-0.04,  75]
       - [-1.00, 100]
 
+  # --- Portfolio concentration ----------------------------------------
+  industry_hhi:
+    weight: 1.0
+    source: portfolio.industry_hhi
+    direction: lower_is_better
+    # Herfindahl index over industry exposure. Thresholds:
+    #   0.05  -> effective-N ~20, well diversified (score 0)
+    #   0.10  -> ~10 industries, "middlemark" for large BDCs
+    #   0.20  -> ~5 industries, concentrated
+    #   0.35+ -> ~3 industries or fewer, extremely concentrated
+    curve:
+      - [0.05,   0]
+      - [0.08,  20]
+      - [0.12,  40]
+      - [0.20,  65]
+      - [0.35,  90]
+      - [1.00, 100]
+
+  # --- Portfolio credit quality ---------------------------------------
+  non_accrual_fv:
+    weight: 1.5
+    source: portfolio.non_accrual_pct_fair_value
+    direction: lower_is_better
+    # Share of portfolio fair value on non-accrual. Only ARCC and CION
+    # tag this directly today; other filers will be null and this
+    # factor will be excluded from their composite.
+    curve:
+      - [0.005,   0]
+      - [0.01,   15]
+      - [0.02,   35]
+      - [0.03,   55]
+      - [0.05,   80]
+      - [0.10,  100]
+
 # Alert rules — fire independently of the composite score. Each rule
 # emits a reason string that matches ingest/notifications.yaml's
 # `include_reasons` filter so the email dispatcher picks them up.
@@ -169,3 +203,17 @@ alerts:
     description: "Portfolio fair value below cost by >3%."
     any_of:
       - {source: derived.fair_value_to_cost, op: "<", value: 0.97}
+
+  non_accrual_elevated:
+    severity: high
+    group: portfolio_quality
+    description: "Non-accrual investments exceed 3% of portfolio fair value."
+    any_of:
+      - {source: portfolio.non_accrual_pct_fair_value, op: ">=", value: 0.03}
+
+  industry_concentration:
+    severity: medium
+    group: concentration
+    description: "Industry HHI indicates heavy sector concentration (effective-N < 5)."
+    any_of:
+      - {source: portfolio.industry_hhi, op: ">=", value: 0.20}

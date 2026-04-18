@@ -7,17 +7,21 @@
 #   2. Download recent 10-K / 10-Q / 8-K for each BDC.
 #   3. Parse XBRL company facts -> canonical metrics (NAV, NII, leverage,
 #      asset coverage, PIK ratio, fair-value-to-cost, distributions).
-#   4. Score each BDC with the risk engine and emit alert_*.json for
-#      breaches (leverage, NAV decline, dividend coverage, PIK, etc.).
-#   5. [opt-in] Email the day's alerts via scripts/send_risk_alerts.py.
+#   4. Extract Schedule-of-Investments aggregates (industry HHI,
+#      affiliation split, and direct non-accrual % where tagged).
+#   5. Score each BDC with the risk engine and emit alert_*.json for
+#      breaches (leverage, NAV decline, dividend coverage, PIK,
+#      non-accrual, industry concentration).
+#   6. [opt-in] Email the day's alerts via scripts/send_risk_alerts.py.
 #
-# Schedule-of-Investments parsing and investor-report generation land in
-# future commits (extract_portfolio.py, build_investor_report.py).
+# Investor-report generation lands in a future commit
+# (build_investor_report.py).
 #
 # Usage:
 #   scripts/run-daily-pricredit.sh
 #   scripts/run-daily-pricredit.sh --tickers ARCC,MAIN,OBDC
 #   scripts/run-daily-pricredit.sh --skip-parse               # ingest only
+#   scripts/run-daily-pricredit.sh --skip-portfolio           # no SoI parse
 #   scripts/run-daily-pricredit.sh --skip-risk                # ingest+parse, no scoring
 #   scripts/run-daily-pricredit.sh --send-alerts              # + email alerts
 #   scripts/run-daily-pricredit.sh --send-alerts --digest     # + one digest email
@@ -30,6 +34,7 @@
 #   PUBLIC_ONLY           "1" to skip non-traded BDCs (default: 1)
 #   UNIVERSE_MAX_AGE_H    Refresh bdc_universe.json if older (default: 168h = 7d)
 #   SKIP_PARSE            "1" to skip the XBRL parse step (default: 0)
+#   SKIP_PORTFOLIO        "1" to skip the SoI extraction step (default: 0)
 #   SKIP_RISK             "1" to skip the risk scoring step (default: 0)
 #   SEND_ALERTS           "1" to email alerts after scoring (default: 0)
 #   SEND_DIGEST           "1" to send one digest email instead of one-per-alert
@@ -56,6 +61,7 @@ LIMIT_PER_FORM="${LIMIT_PER_FORM:-4}"
 PUBLIC_ONLY="${PUBLIC_ONLY:-1}"
 UNIVERSE_MAX_AGE_H="${UNIVERSE_MAX_AGE_H:-168}"
 SKIP_PARSE="${SKIP_PARSE:-0}"
+SKIP_PORTFOLIO="${SKIP_PORTFOLIO:-0}"
 SKIP_RISK="${SKIP_RISK:-0}"
 SEND_ALERTS="${SEND_ALERTS:-0}"
 SEND_DIGEST="${SEND_DIGEST:-0}"
@@ -68,6 +74,8 @@ for arg in "$@"; do
   case "$arg" in
     --skip-parse)     SKIP_PARSE=1 ;;
     --no-skip-parse)  SKIP_PARSE=0 ;;
+    --skip-portfolio) SKIP_PORTFOLIO=1 ;;
+    --no-skip-portfolio) SKIP_PORTFOLIO=0 ;;
     --skip-risk)      SKIP_RISK=1 ;;
     --no-skip-risk)   SKIP_RISK=0 ;;
     --send-alerts)    SEND_ALERTS=1 ;;
@@ -158,6 +166,33 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# 3b. Extract Schedule-of-Investments aggregates (industry HHI,
+#     affiliation mix, direct non-accrual % where filers tag it).
+# -----------------------------------------------------------------------------
+if [[ "$SKIP_PORTFOLIO" != "1" && "$SKIP_PARSE" != "1" ]]; then
+  portfolio_args=(--universe "$UNIVERSE"
+                  --filings "$ROOT/filings"
+                  --out "$ROOT/extracted"
+                  --run-summary "$LOG_DIR/portfolio_summary.json")
+  [[ "$PUBLIC_ONLY" == "1" ]] || portfolio_args+=("--include-private")
+
+  for arg in "${fetch_passthrough[@]}"; do
+    case "$arg" in
+      --tickers|--ciks|--max-bdcs|--ticker)
+        portfolio_args+=("$arg") ;;
+      -*) ;;
+      *)  portfolio_args+=("$arg") ;;
+    esac
+  done
+
+  log "extracting portfolio SoI aggregates: extract_portfolio.py ${portfolio_args[*]}"
+  "$PY" "$SCRIPT_DIR/extract_portfolio.py" "${portfolio_args[@]}" >>"$LOG" 2>&1 \
+    || log "extract_portfolio.py exited non-zero (continuing)"
+elif [[ "$SKIP_PORTFOLIO" == "1" ]]; then
+  log "SKIP_PORTFOLIO=1 -> skipping Schedule-of-Investments extraction"
+fi
+
+# -----------------------------------------------------------------------------
 # 4. Score each BDC with the risk engine and emit alert_*.json files.
 # -----------------------------------------------------------------------------
 if [[ "$SKIP_RISK" != "1" && "$SKIP_PARSE" != "1" ]]; then
@@ -218,7 +253,9 @@ total_sent=0
 if [[ -d "$LOG_DIR/.sent" ]]; then
   total_sent=$(find "$LOG_DIR/.sent" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
 fi
+total_portfolios=$(find "$ROOT/extracted" -path '*/portfolio/*/portfolio.json' 2>/dev/null | wc -l | tr -d ' ')
 log "filings on disk: total=$total_filings fetched_today=$fresh_today"
 log "BDCs parsed: $total_parsed (see $LOG_DIR/parse_summary.json)"
+log "BDCs with SoI extracted: $total_portfolios (see $LOG_DIR/portfolio_summary.json)"
 log "BDCs scored: $total_scored; risk alerts emitted: $total_alerts; dispatched: $total_sent"
 log "PriCredit daily run done. Log: $LOG"

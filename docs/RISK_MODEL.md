@@ -205,10 +205,17 @@ when we're ready to notify on BDC risk.
 
 ## 9. Known limitations (roadmap)
 
-- **Non-accrual %** and **industry concentration (HHI)** are planned
-  factors that need Schedule-of-Investments parsing
-  (`extract_portfolio.py`). Until then the score misses the strongest
-  credit-quality signal.
+- **Non-accrual %** is live for the 2/52 BDCs that tag the concept
+  directly (ARCC, CION). For everyone else the factor is excluded
+  from the composite and the `non_accrual_elevated` alert can't fire
+  — a v1 HTML-table SoI parser in `extract_portfolio.py` is the
+  planned fix.
+- **Industry concentration (HHI)** is live for 46/52 BDCs via
+  `extract_portfolio.py`'s inline-XBRL parser. See
+  [`PORTFOLIO_MODEL.md`](PORTFOLIO_MODEL.md) for coverage caveats —
+  the HHI is measured over industry-tagged investments, not the
+  entire portfolio, so when `industry_coverage_pct` is low the
+  number is directional, not absolute.
 - **Cross-filing validation**: the engine trusts XBRL facts as
   reported; it does not yet detect tag-taxonomy drift between
   filings (e.g., a BDC switching from `us-gaap:Investments` to a

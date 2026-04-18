@@ -94,7 +94,30 @@ Canonical metrics and the tag priority list live in
 [`docs/XBRL_CONCEPT_MAP.md`](../docs/XBRL_CONCEPT_MAP.md) for the
 full catalog and extension procedure.
 
-## 4. Score risk
+## 4. Extract Schedule of Investments
+
+```bash
+scripts/extract_portfolio.py --ticker ARCC --print           # one BDC, verbose
+scripts/extract_portfolio.py --tickers ARCC,MAIN,OBDC        # subset
+scripts/extract_portfolio.py                                 # all public BDCs
+scripts/extract_portfolio.py --force                         # ignore 20h freshness
+```
+
+Parses the **inline XBRL** in each BDC's most recent 10-Q (fallback
+10-K) primary document and emits per-BDC portfolio aggregates:
+
+| File | Contents |
+|------|----------|
+| `extracted/<cik>/portfolio/<accession>/portfolio.json` | Total FV, affiliation split, industry HHI, top industries, tagged non-accrual %. |
+| `extracted/<cik>/portfolio/<accession>/source.json` | The filing we parsed (form, date, accession, primary doc URL). |
+
+`extract_portfolio.py` also merges a compact `portfolio:` block into
+`extracted/<cik>/facts/summary.json` so `compute_risk.py` can read
+the new signals without re-parsing the 10-K. Methodology and
+coverage trade-offs live in
+[`../docs/PORTFOLIO_MODEL.md`](../docs/PORTFOLIO_MODEL.md).
+
+## 5. Score risk
 
 ```bash
 scripts/compute_risk.py --tickers ARCC,MAIN,OBDC --print     # score + stderr audit
@@ -117,7 +140,7 @@ methodology doc lives at
 piecewise-linear; missing factors are excluded (not imputed) and
 weights renormalize over the factors we had data for.
 
-## 5. Email risk alerts
+## 6. Email risk alerts
 
 Alerts emitted by `compute_risk.py` land as
 `reports/<DATE>/alert_RISK-<ticker>-*.json`. The dispatcher reads
@@ -166,12 +189,13 @@ Behavior details:
   attaching `risk_summary.json`. Its own marker is
   `.sent/digest.json`.
 
-## 6. Daily orchestrator
+## 7. Daily orchestrator
 
 ```bash
-scripts/run-daily-pricredit.sh                                # ingest + parse + risk
+scripts/run-daily-pricredit.sh                                # ingest + parse + portfolio + risk
 scripts/run-daily-pricredit.sh --tickers ARCC,MAIN            # drill-down
 scripts/run-daily-pricredit.sh --skip-parse                   # ingest only
+scripts/run-daily-pricredit.sh --skip-portfolio               # skip SoI extraction
 scripts/run-daily-pricredit.sh --skip-risk                    # ingest + parse, no scoring
 scripts/run-daily-pricredit.sh --send-alerts                  # + email alerts (per-alert)
 scripts/run-daily-pricredit.sh --send-alerts --digest         # + one digest email
@@ -187,13 +211,17 @@ Behavior:
 3. Calls `fetch_filings.py` with the configured forms + limits.
 4. Calls `parse_filings.py` (unless `--skip-parse` / `SKIP_PARSE=1`),
    writing a run summary to `reports/<DATE>/parse_summary.json`.
-5. Calls `compute_risk.py` (unless `--skip-risk` / `SKIP_RISK=1` or
+5. Calls `extract_portfolio.py` (unless `--skip-portfolio` /
+   `SKIP_PORTFOLIO=1` or parse was skipped), writing per-BDC
+   `portfolio.json` under `extracted/<cik>/portfolio/<accession>/`
+   and a run summary to `reports/<DATE>/portfolio_summary.json`.
+6. Calls `compute_risk.py` (unless `--skip-risk` / `SKIP_RISK=1` or
    parse was skipped), writing per-BDC scorecards, `risk_summary.json`,
    and one `alert_*.json` per firing rule into `reports/<DATE>/`.
-6. **If `--send-alerts`**, invokes `send_risk_alerts.py` against the
+7. **If `--send-alerts`**, invokes `send_risk_alerts.py` against the
    day's reports dir. `--digest` collapses to one email;
    `--alert-dry-run` composes without sending.
-7. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
+8. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
 
 ## Environment / knobs
 
@@ -206,6 +234,7 @@ Behavior:
 | `PUBLIC_ONLY` | `1` | Skip BDCs that never became publicly traded. |
 | `UNIVERSE_MAX_AGE_H` | `168` | Refresh universe if older than this many hours. |
 | `SKIP_PARSE` | `0` | Set to `1` to skip the XBRL parse step (ingest only). |
+| `SKIP_PORTFOLIO` | `0` | Set to `1` to skip the SoI extraction step. |
 | `SKIP_RISK` | `0` | Set to `1` to skip the risk scoring step. |
 | `SEND_ALERTS` | `0` | Set to `1` to email alerts after scoring. |
 | `SEND_DIGEST` | `0` | With `SEND_ALERTS=1`, send one digest instead of per-alert. |
@@ -222,10 +251,10 @@ keyed by URL. Delete that directory to force a cold pull, or pass
 
 ## What's next
 
-`extract_portfolio.py` (Schedule of Investments — adds non-accrual %
-and industry HHI as risk factors) and `build_investor_report.py`
-land in follow-up commits. The investor report dispatcher will
-reuse the SMTP / routing layer in `send_risk_alerts.py`. See
+`build_investor_report.py` (weekly HTML + PDF digest per BDC, reusing
+the SMTP layer in `send_risk_alerts.py`) is the remaining big piece.
+A v1 of `extract_portfolio.py` adding a full HTML-table SoI parser
+will extend non-accrual coverage from 2/52 BDCs to ~90%. See
 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for module
 contracts and [`AGENTS.md`](../AGENTS.md) for the full script
 roadmap.

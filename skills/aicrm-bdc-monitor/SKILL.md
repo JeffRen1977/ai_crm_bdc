@@ -20,26 +20,34 @@ invoked this skill:
    series via
    [`scripts/parse_filings.py`](../../scripts/parse_filings.py),
    with 10-K/A restatements auto-superseding originals.
-5. Scores each BDC with
+5. Extracts Schedule-of-Investments aggregates (industry HHI,
+   affiliation split, direct non-accrual % where tagged) via
+   [`scripts/extract_portfolio.py`](../../scripts/extract_portfolio.py)
+   and merges them into the same per-BDC `summary.json`.
+6. Scores each BDC with
    [`scripts/compute_risk.py`](../../scripts/compute_risk.py) using
    the weights/curves/alert rules in
    [`ingest/risk_weights.yaml`](../../ingest/risk_weights.yaml) and
    emits `risk_<ticker>.json`, `risk_summary.json`, and one
-   `alert_RISK-<ticker>-*.json` per firing rule.
+   `alert_RISK-<ticker>-*.json` per firing rule (including the new
+   `non_accrual_elevated` and `industry_concentration` rules).
+7. Dispatches alerts to routes configured in
+   [`ingest/notifications.yaml`](../../ingest/notifications.yaml)
+   via [`scripts/send_risk_alerts.py`](../../scripts/send_risk_alerts.py)
+   with idempotency markers in `reports/<DATE>/.sent/`.
 
-All five steps are wrapped by
+All steps are wrapped by
 [`scripts/run-daily-pricredit.sh`](../../scripts/run-daily-pricredit.sh)
-(flags `--skip-parse` / `--skip-risk`).
+(flags `--skip-parse` / `--skip-portfolio` / `--skip-risk` /
+`--send-alerts` / `--digest`).
 
 ## Contract (planned, v1)
 
-6. Parses Schedule of Investments into per-loan rows
-   (`extract_portfolio.py`) — adds `non_accrual_pct_fair_value` and
-   `industry_hhi` as risk factors.
-7. Produces investor-ready reports in `reports/<DATE>/investors/`.
-8. Dispatches risk alerts + investor reports to routes configured in
-   [`ingest/notifications.yaml`](../../ingest/notifications.yaml)
-   (port the `idvault` dispatcher: shared `alert_*.json` schema).
+8. HTML-table-based Schedule of Investments parser in
+   `extract_portfolio.py` so non-accrual coverage jumps from the
+   current 2/52 direct-tag BDCs to ~90%.
+9. Produces investor-ready HTML + PDF reports in
+   `reports/<DATE>/investors/` via `build_investor_report.py`.
 
 ## Output contract
 
@@ -63,9 +71,13 @@ PriCredit/
 │   ├── timeseries.json                # full history per metric
 │   ├── latest.json                    # latest observation per metric
 │   ├── resolved.json                  # XBRL tag -> canonical audit trail
-│   └── summary.json                   # one-page snapshot (latest + derived + nav_trend)
+│   └── summary.json                   # one-page snapshot (latest + derived + nav_trend + portfolio)
+├── extracted/<cik>/portfolio/<accession>/
+│   ├── portfolio.json                 # industry HHI, affiliation split, non-accrual %
+│   └── source.json                    # filing provenance for the aggregates
 ├── reports/<DATE>/pricredit.log       # operator log
 ├── reports/<DATE>/parse_summary.json  # XBRL coverage roll-up
+├── reports/<DATE>/portfolio_summary.json  # SoI extraction coverage roll-up
 ├── reports/<DATE>/risk_<ticker>.json  # per-BDC scorecard
 ├── reports/<DATE>/risk_summary.json   # universe roll-up
 └── reports/<DATE>/alert_RISK-*.json   # one file per firing rule

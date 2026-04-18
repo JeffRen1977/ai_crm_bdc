@@ -58,6 +58,7 @@ def get_by_path(summary: dict, path: str) -> float | None:
        latest.<metric>          -> summary.latest[metric].val
        derived.<name>           -> summary.derived[name].val
        nav_trend.<qoq|yoy>.pct_change -> summary.nav_trend[...].pct_change
+       portfolio.<field>        -> summary.portfolio[field]  (from extract_portfolio.py)
     """
     parts = path.split(".")
     if not parts:
@@ -78,6 +79,13 @@ def get_by_path(summary: dict, path: str) -> float | None:
         return None
     if head == "nav_trend":
         node: Any = summary.get("nav_trend") or {}
+        for p in parts[1:]:
+            if not isinstance(node, dict):
+                return None
+            node = node.get(p)
+        return _to_float(node)
+    if head == "portfolio":
+        node: Any = summary.get("portfolio") or {}
         for p in parts[1:]:
             if not isinstance(node, dict):
                 return None

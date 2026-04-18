@@ -15,8 +15,11 @@
    由 `scripts/discover_bdcs.py` 自动发现，可叠加人工 `bdc_overrides.json`。
 2. **EDGAR 拉取** — `scripts/fetch_filings.py` 按 CIK 读取 submissions.json，
    下载目标表单（10-K / 10-Q / 8-K / DEF 14A / N-54A 等）。
-3. **parse** — 表单解析（XBRL Company Facts、Schedule of Investments、
-   Management Discussion）写入 `extracted/<cik>/<accession>/*.json`（未进仓库）。
+3. **parse** — `scripts/parse_filings.py` 解析 XBRL Company Facts 得到
+   规范化 NAV/NII/杠杆时间序列；`scripts/extract_portfolio.py` 解析主文档
+   inline XBRL，输出 Schedule of Investments 级别的 `portfolio.json`
+   （行业 HHI、关联方分布、已标签的 non-accrual%）。
+   两者都写入 `extracted/<cik>/...` 下，未进仓库。
 4. **risk** — `scripts/compute_risk.py` 消费 `extracted/<cik>/facts/summary.json`，
    按 `ingest/risk_weights.yaml` 的权重 + 分段线性阈值曲线评分，产出
    `reports/YYYY-MM-DD/risk_<ticker>.json`（单家明细）、`risk_summary.json`（汇总）
@@ -41,7 +44,8 @@
 | `scripts/compute_risk.py` | 风险评分：6 个因子 × 分段线性曲线 → 复合得分 / 分档 + 独立阈值规则 → `alert_*.json`。配置在 `ingest/risk_weights.yaml`，方法论见 [`docs/RISK_MODEL.md`](docs/RISK_MODEL.md)。 | ✅ v0 |
 | `ingest/risk_weights.yaml` | 风险引擎的权重、曲线、阈值、告警规则；所有数值都可编辑后重算。 | ✅ v0 |
 | `scripts/send_risk_alerts.py` / `send-risk-alerts.sh` | 读 `reports/<DATE>/alert_RISK-*.json`，按 `ingest/notifications.yaml` 的严重度过滤路由成邮件。支持 `--digest` 合并成一封、`--dry-run` 预览、基于 `.sent/` 目录的幂等。 | ✅ v0 |
-| `scripts/extract_portfolio.py` | Schedule of Investments → 贷款级结构化数据（会补齐 non-accrual% 与行业 HHI 两个因子）。 | ⏳ 计划 |
+| `scripts/extract_portfolio.py` | 解析 BDC 主文档的 inline XBRL Schedule of Investments，输出 `portfolio.json`（行业 HHI、关联方分布、已标签的 non-accrual%、持仓表总额）。方法论见 [`docs/PORTFOLIO_MODEL.md`](docs/PORTFOLIO_MODEL.md)。 | ✅ v0 |
+| `scripts/_soi_parser.py` | `extract_portfolio.py` 的共享 iXBRL 解析原语（contexts、facts、聚合）。 | ✅ v0 |
 | `scripts/build_investor_report.py` | 客户端投资人报告合成。 | ⏳ 计划 |
 | `scripts/send_reports.py` | 投资人报告分发（复用 `send_risk_alerts.py` 的 SMTP / 路由层）。 | ⏳ 计划 |
 | `scripts/requirements.txt` | Python 依赖（requests、lxml、openpyxl、pandas、pyyaml 等）。 | ✅ v0 |
