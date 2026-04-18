@@ -36,16 +36,17 @@ Three modules share one ingestion spine.
          |                     |                     |
          v                     v                     v
   compute_risk.py       build_investor_       build_portfolio_
-     ✅ v0              report.py             view.py
+     ✅ v0              report.py  ✅ v0     view.py
          |                     |                     |
          v                     v                     v
-  reports/YYYY-MM-DD/   reports/investors/   reports/portfolio/
-     risk_*.json           email bodies         aggregated views
-     alert_*.json
-         |                                           |
-         +-----------+---------------+---------------+
-                     v               v
-               send_reports.py   notifications.yaml
+  reports/YYYY-MM-DD/   reports/YYYY-MM-DD/   reports/portfolio/
+     risk_*.json           briefs/             aggregated views
+     alert_*.json          <TICKER>.md + .json
+                           index.md + .json
+         |                     |                     |
+         +-----------+---------+---------------------+
+                     v                     v
+               send_risk_alerts.py   notifications.yaml
 ```
 
 ## Module contracts
@@ -78,19 +79,35 @@ maturity + PIK flag, plus cross-BDC `borrower_overlap.json`.
 
 ### 2. Investor Reporting Module
 
-**Goal.** Generate client-ready periodic reports with consistent KPIs
+**Goal.** Generate client-ready per-BDC memos with consistent KPIs
 and an audit trail linking every number back to the source filing.
 
-**Inputs.** XBRL Company Facts (NAV/share, NII, distributions), plus
-outputs of Portfolio Management.
+**Inputs.** `extracted/<cik>/facts/{summary,timeseries}.json`,
+`extracted/<cik>/portfolio/<accn>/portfolio.json`,
+`reports/<DATE>/risk_<ticker>.json`, and
+`reports/<DATE>/alert_RISK-<ticker>-*.json`. All artifacts are
+already on disk — the brief generator never re-hits EDGAR.
 
-**Outputs.**
-- `reports/investors/<DATE>/<client>.html` — HTML with tables +
-  per-metric citations.
-- `reports/investors/<DATE>/<client>.pdf` — optional, via
-  `weasyprint` (future).
-- Delivered via `scripts/send_reports.py` using the routing in
-  `ingest/notifications.yaml`.
+**Outputs (v0, `pricredit.investor_brief/v0`).** Everything lands in
+`reports/<DATE>/briefs/`:
+
+- `<TICKER>.md` — human-readable investor memo: headline + band,
+  risk snapshot with top contributors, open alerts with triggers,
+  15-row financial snapshot, NAV trend (QoQ/YoY + 8-quarter
+  sparkline + table), portfolio snapshot (HHI + effective-N + top 5
+  industries + affiliation mix + non-accrual %), factor audit,
+  methodology footer.
+- `<TICKER>.json` — machine-readable mirror (same facts, stable
+  schema).
+- `index.md` / `index.json` — universe roll-up sorted by composite
+  score with band counts and per-BDC headline numbers.
+
+See [`INVESTOR_REPORT.md`](INVESTOR_REPORT.md) for the full schema
+and rendering contract.
+
+Planned: HTML / PDF rendering and an SMTP delivery path
+(`send_reports.py`, reusing the dispatcher in
+`send_risk_alerts.py`).
 
 ### 3. Risk Management Engine
 
@@ -161,12 +178,20 @@ Full methodology + curves + rationale:
   Supports per-alert or `--digest` mode, dry-run, and is idempotent
   via `reports/<DATE>/.sent/`. The daily orchestrator invokes it
   with `--send-alerts`.
+- **Investor brief generator** — `build_investor_report.py`. Composes
+  `summary.json` + `portfolio.json` + `risk_*.json` + `alert_*.json`
+  into per-BDC markdown + JSON briefs and a universe `index.md` /
+  `index.json`, all under `reports/<DATE>/briefs/`. 52/52 BDCs
+  covered on the latest run; deterministic, offline-safe. Wired
+  into the daily orchestrator after the risk step; opt-out via
+  `--skip-reports` / `SKIP_REPORTS=1`. See
+  [`INVESTOR_REPORT.md`](INVESTOR_REPORT.md).
 
-Still to build: `build_investor_report.py`, `send_reports.py`, and a
-v1 of `extract_portfolio.py` with HTML-table SoI parsing so
-non-accrual coverage lifts from 2/52 BDCs (direct-tag only) to ~90%.
-See the top-level [`README.md`](../README.md) for current runnable
-CLIs.
+Still to build: `send_reports.py` (email / HTML delivery for the
+briefs), and a v1 of `extract_portfolio.py` with HTML-table SoI
+parsing so non-accrual coverage lifts from 2/52 BDCs (direct-tag
+only) to ~90%. See the top-level [`README.md`](../README.md) for
+current runnable CLIs.
 
 ## Disclaimer
 

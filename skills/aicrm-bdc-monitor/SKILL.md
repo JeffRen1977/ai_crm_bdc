@@ -31,7 +31,13 @@ invoked this skill:
    emits `risk_<ticker>.json`, `risk_summary.json`, and one
    `alert_RISK-<ticker>-*.json` per firing rule (including the new
    `non_accrual_elevated` and `industry_concentration` rules).
-7. Dispatches alerts to routes configured in
+7. Builds per-BDC investor briefs (markdown + JSON) and a universe
+   `index.md` / `index.json` via
+   [`scripts/build_investor_report.py`](../../scripts/build_investor_report.py),
+   composing `summary.json` + `portfolio.json` + `risk_*.json` +
+   `alert_*.json` — no additional EDGAR calls. Output lands in
+   `reports/<DATE>/briefs/`.
+8. Dispatches alerts to routes configured in
    [`ingest/notifications.yaml`](../../ingest/notifications.yaml)
    via [`scripts/send_risk_alerts.py`](../../scripts/send_risk_alerts.py)
    with idempotency markers in `reports/<DATE>/.sent/`.
@@ -39,15 +45,15 @@ invoked this skill:
 All steps are wrapped by
 [`scripts/run-daily-pricredit.sh`](../../scripts/run-daily-pricredit.sh)
 (flags `--skip-parse` / `--skip-portfolio` / `--skip-risk` /
-`--send-alerts` / `--digest`).
+`--skip-reports` / `--send-alerts` / `--digest`).
 
 ## Contract (planned, v1)
 
-8. HTML-table-based Schedule of Investments parser in
+9. HTML-table-based Schedule of Investments parser in
    `extract_portfolio.py` so non-accrual coverage jumps from the
    current 2/52 direct-tag BDCs to ~90%.
-9. Produces investor-ready HTML + PDF reports in
-   `reports/<DATE>/investors/` via `build_investor_report.py`.
+10. SMTP / HTML / PDF delivery of the investor briefs (reusing the
+    dispatcher in `send_risk_alerts.py`) via `send_reports.py`.
 
 ## Output contract
 
@@ -80,7 +86,12 @@ PriCredit/
 ├── reports/<DATE>/portfolio_summary.json  # SoI extraction coverage roll-up
 ├── reports/<DATE>/risk_<ticker>.json  # per-BDC scorecard
 ├── reports/<DATE>/risk_summary.json   # universe roll-up
-└── reports/<DATE>/alert_RISK-*.json   # one file per firing rule
+├── reports/<DATE>/alert_RISK-*.json   # one file per firing rule
+└── reports/<DATE>/briefs/             # investor memos (markdown + JSON)
+    ├── <TICKER>.md                    # human-readable per-BDC brief
+    ├── <TICKER>.json                  # pricredit.investor_brief/v0
+    ├── index.md                       # universe roll-up, sorted by score
+    └── index.json                     # pricredit.investor_brief_index/v0
 ```
 
 ## Failure modes to watch

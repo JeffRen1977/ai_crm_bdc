@@ -12,10 +12,9 @@
 #   5. Score each BDC with the risk engine and emit alert_*.json for
 #      breaches (leverage, NAV decline, dividend coverage, PIK,
 #      non-accrual, industry concentration).
-#   6. [opt-in] Email the day's alerts via scripts/send_risk_alerts.py.
-#
-# Investor-report generation lands in a future commit
-# (build_investor_report.py).
+#   6. Build per-BDC investor briefs (markdown + JSON) composed from
+#      summary.json + portfolio.json + risk_<ticker>.json + alert_*.json.
+#   7. [opt-in] Email the day's alerts via scripts/send_risk_alerts.py.
 #
 # Usage:
 #   scripts/run-daily-pricredit.sh
@@ -23,6 +22,7 @@
 #   scripts/run-daily-pricredit.sh --skip-parse               # ingest only
 #   scripts/run-daily-pricredit.sh --skip-portfolio           # no SoI parse
 #   scripts/run-daily-pricredit.sh --skip-risk                # ingest+parse, no scoring
+#   scripts/run-daily-pricredit.sh --skip-reports             # no investor briefs
 #   scripts/run-daily-pricredit.sh --send-alerts              # + email alerts
 #   scripts/run-daily-pricredit.sh --send-alerts --digest     # + one digest email
 #   FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
@@ -36,6 +36,7 @@
 #   SKIP_PARSE            "1" to skip the XBRL parse step (default: 0)
 #   SKIP_PORTFOLIO        "1" to skip the SoI extraction step (default: 0)
 #   SKIP_RISK             "1" to skip the risk scoring step (default: 0)
+#   SKIP_REPORTS          "1" to skip the investor-brief step (default: 0)
 #   SEND_ALERTS           "1" to email alerts after scoring (default: 0)
 #   SEND_DIGEST           "1" to send one digest email instead of one-per-alert
 #   ALERT_DRY_RUN         "1" to dry-run the dispatcher (no SMTP)
@@ -63,6 +64,7 @@ UNIVERSE_MAX_AGE_H="${UNIVERSE_MAX_AGE_H:-168}"
 SKIP_PARSE="${SKIP_PARSE:-0}"
 SKIP_PORTFOLIO="${SKIP_PORTFOLIO:-0}"
 SKIP_RISK="${SKIP_RISK:-0}"
+SKIP_REPORTS="${SKIP_REPORTS:-0}"
 SEND_ALERTS="${SEND_ALERTS:-0}"
 SEND_DIGEST="${SEND_DIGEST:-0}"
 ALERT_DRY_RUN="${ALERT_DRY_RUN:-0}"
@@ -78,6 +80,8 @@ for arg in "$@"; do
     --no-skip-portfolio) SKIP_PORTFOLIO=0 ;;
     --skip-risk)      SKIP_RISK=1 ;;
     --no-skip-risk)   SKIP_RISK=0 ;;
+    --skip-reports)   SKIP_REPORTS=1 ;;
+    --no-skip-reports) SKIP_REPORTS=0 ;;
     --send-alerts)    SEND_ALERTS=1 ;;
     --no-send-alerts) SEND_ALERTS=0 ;;
     --digest)         SEND_DIGEST=1 ;;
@@ -221,6 +225,40 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# 4b. Build per-BDC investor briefs (markdown + JSON) and a universe index.
+#     Depends on risk_*.json in reports/<DATE>/, so only runs if risk scoring
+#     actually produced something.
+# -----------------------------------------------------------------------------
+if [[ "$SKIP_REPORTS" != "1" && "$SKIP_RISK" != "1" && "$SKIP_PARSE" != "1" ]]; then
+  risk_card_count=$(find "$LOG_DIR" -maxdepth 1 -name 'risk_*.json' \
+                    ! -name 'risk_summary.json' 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$risk_card_count" == "0" ]]; then
+    log "no risk_*.json in $LOG_DIR; skipping investor-brief step"
+  else
+    brief_args=(--extracted "$ROOT/extracted"
+                --reports "$ROOT/reports"
+                --universe "$UNIVERSE"
+                --date "$DATE"
+                --force
+                --run-summary "$LOG_DIR/briefs_run_summary.json")
+    for arg in "${fetch_passthrough[@]}"; do
+      case "$arg" in
+        --tickers|--ciks|--ticker)
+          brief_args+=("$arg") ;;
+        -*) ;;
+        *)  brief_args+=("$arg") ;;
+      esac
+    done
+
+    log "building investor briefs: build_investor_report.py ${brief_args[*]}"
+    "$PY" "$SCRIPT_DIR/build_investor_report.py" "${brief_args[@]}" >>"$LOG" 2>&1 \
+      || log "build_investor_report.py exited non-zero (continuing)"
+  fi
+elif [[ "$SKIP_REPORTS" == "1" ]]; then
+  log "SKIP_REPORTS=1 -> skipping investor-brief generation"
+fi
+
+# -----------------------------------------------------------------------------
 # 5. [opt-in] Email the day's risk alerts.
 # -----------------------------------------------------------------------------
 if [[ "$SEND_ALERTS" == "1" ]]; then
@@ -254,8 +292,10 @@ if [[ -d "$LOG_DIR/.sent" ]]; then
   total_sent=$(find "$LOG_DIR/.sent" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
 fi
 total_portfolios=$(find "$ROOT/extracted" -path '*/portfolio/*/portfolio.json' 2>/dev/null | wc -l | tr -d ' ')
+total_briefs=$(find "$LOG_DIR/briefs" -maxdepth 1 -name '*.md' ! -name 'index.md' 2>/dev/null | wc -l | tr -d ' ')
 log "filings on disk: total=$total_filings fetched_today=$fresh_today"
 log "BDCs parsed: $total_parsed (see $LOG_DIR/parse_summary.json)"
 log "BDCs with SoI extracted: $total_portfolios (see $LOG_DIR/portfolio_summary.json)"
 log "BDCs scored: $total_scored; risk alerts emitted: $total_alerts; dispatched: $total_sent"
+log "investor briefs: $total_briefs (see $LOG_DIR/briefs/index.md)"
 log "PriCredit daily run done. Log: $LOG"

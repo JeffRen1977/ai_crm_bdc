@@ -25,7 +25,13 @@
    `reports/YYYY-MM-DD/risk_<ticker>.json`（单家明细）、`risk_summary.json`（汇总）
    与 `alert_RISK-<ticker>-*.json`（触发阈值时一条一个）。评分体系详见
    [`docs/RISK_MODEL.md`](docs/RISK_MODEL.md)。
-5. **distribute** — 风险告警由 `scripts/send_risk_alerts.py` 按
+5. **briefs** — `scripts/build_investor_report.py` 合成已产出的
+   `summary.json` + `portfolio.json` + `risk_<ticker>.json` +
+   `alert_*.json`，为每家 BDC 生成 `reports/<DATE>/briefs/<TICKER>.md`
+   与同名 `.json`，并附一份全宇宙 `index.md` / `index.json`（按复合
+   评分排序）。不再触 EDGAR。详见
+   [`docs/INVESTOR_REPORT.md`](docs/INVESTOR_REPORT.md)。
+6. **distribute** — 风险告警由 `scripts/send_risk_alerts.py` 按
    `ingest/notifications.yaml` 的路由 + 严重度过滤发送邮件；幂等标记写入
    `reports/<DATE>/.sent/<alert_id>.json`。投资人报告（规划中的
    `scripts/send_reports.py`）共用同一套配置。凭据在 `~/.pricredit-env`
@@ -46,7 +52,7 @@
 | `scripts/send_risk_alerts.py` / `send-risk-alerts.sh` | 读 `reports/<DATE>/alert_RISK-*.json`，按 `ingest/notifications.yaml` 的严重度过滤路由成邮件。支持 `--digest` 合并成一封、`--dry-run` 预览、基于 `.sent/` 目录的幂等。 | ✅ v0 |
 | `scripts/extract_portfolio.py` | 解析 BDC 主文档的 inline XBRL Schedule of Investments，输出 `portfolio.json`（行业 HHI、关联方分布、已标签的 non-accrual%、持仓表总额）。方法论见 [`docs/PORTFOLIO_MODEL.md`](docs/PORTFOLIO_MODEL.md)。 | ✅ v0 |
 | `scripts/_soi_parser.py` | `extract_portfolio.py` 的共享 iXBRL 解析原语（contexts、facts、聚合）。 | ✅ v0 |
-| `scripts/build_investor_report.py` | 客户端投资人报告合成。 | ⏳ 计划 |
+| `scripts/build_investor_report.py` | 将已产出的 `summary.json` + `portfolio.json` + `risk_*.json` + `alert_*.json` 合成为每家 BDC 的投资人简报（Markdown + JSON）以及全宇宙索引 `index.md` / `index.json`。仅本地合成，不触网络。见 [`docs/INVESTOR_REPORT.md`](docs/INVESTOR_REPORT.md)。 | ✅ v0 |
 | `scripts/send_reports.py` | 投资人报告分发（复用 `send_risk_alerts.py` 的 SMTP / 路由层）。 | ⏳ 计划 |
 | `scripts/requirements.txt` | Python 依赖（requests、lxml、openpyxl、pandas、pyyaml 等）。 | ✅ v0 |
 | `scripts/README.md` | 脚本详细用法与环境变量。 | ✅ v0 |

@@ -140,7 +140,41 @@ methodology doc lives at
 piecewise-linear; missing factors are excluded (not imputed) and
 weights renormalize over the factors we had data for.
 
-## 6. Email risk alerts
+## 6. Build investor briefs
+
+```bash
+scripts/build_investor_report.py                              # latest run date, all BDCs
+scripts/build_investor_report.py --tickers ARCC,MAIN,OBDC     # subset
+scripts/build_investor_report.py --date 2026-04-18 --force    # pinned run date, overwrite
+scripts/build_investor_report.py --print --tickers ARCC       # dump markdown to stdout
+```
+
+Consumes the already-materialized artifacts for a given run date and
+composes a per-BDC memo (and a universe index) without re-hitting
+EDGAR:
+
+- `extracted/<cik>/facts/summary.json` — canonical metrics + portfolio block
+- `extracted/<cik>/facts/timeseries.json` — NAV history (sparkline)
+- `extracted/<cik>/portfolio/<accn>/portfolio.json` — top industries, affiliation mix
+- `reports/<DATE>/risk_<ticker>.json` — composite, factor audit
+- `reports/<DATE>/alert_RISK-<ticker>-*.json` — open alerts
+
+Outputs land in `reports/<DATE>/briefs/`:
+
+| File | Contents |
+|------|----------|
+| `<TICKER>.md` | Human-readable investor memo: headline/band, risk snapshot, open alerts with triggers, financial snapshot, NAV trend (table + sparkline), portfolio snapshot (HHI, top-5 industries, affiliation mix, non-accrual), factor audit table, methodology footer. |
+| `<TICKER>.json` | Machine-readable version of the same brief (schema `pricredit.investor_brief/v0`). |
+| `index.md` | One-page universe roll-up sorted by composite score, with band counts and per-BDC headline numbers. |
+| `index.json` | Machine-readable index (`pricredit.investor_brief_index/v0`). |
+
+The brief is deterministic — rerunning with the same inputs produces
+byte-identical markdown, so it's safe to check the generated briefs
+into git or upload them as artifacts. See
+[`../docs/INVESTOR_REPORT.md`](../docs/INVESTOR_REPORT.md) for the
+schema contract and rendering rationale.
+
+## 7. Email risk alerts
 
 Alerts emitted by `compute_risk.py` land as
 `reports/<DATE>/alert_RISK-<ticker>-*.json`. The dispatcher reads
@@ -189,14 +223,15 @@ Behavior details:
   attaching `risk_summary.json`. Its own marker is
   `.sent/digest.json`.
 
-## 7. Daily orchestrator
+## 8. Daily orchestrator
 
 ```bash
-scripts/run-daily-pricredit.sh                                # ingest + parse + portfolio + risk
+scripts/run-daily-pricredit.sh                                # ingest + parse + portfolio + risk + briefs
 scripts/run-daily-pricredit.sh --tickers ARCC,MAIN            # drill-down
 scripts/run-daily-pricredit.sh --skip-parse                   # ingest only
 scripts/run-daily-pricredit.sh --skip-portfolio               # skip SoI extraction
 scripts/run-daily-pricredit.sh --skip-risk                    # ingest + parse, no scoring
+scripts/run-daily-pricredit.sh --skip-reports                 # no investor briefs
 scripts/run-daily-pricredit.sh --send-alerts                  # + email alerts (per-alert)
 scripts/run-daily-pricredit.sh --send-alerts --digest         # + one digest email
 scripts/run-daily-pricredit.sh --send-alerts --alert-dry-run  # wire everything, don't send
@@ -218,10 +253,13 @@ Behavior:
 6. Calls `compute_risk.py` (unless `--skip-risk` / `SKIP_RISK=1` or
    parse was skipped), writing per-BDC scorecards, `risk_summary.json`,
    and one `alert_*.json` per firing rule into `reports/<DATE>/`.
-7. **If `--send-alerts`**, invokes `send_risk_alerts.py` against the
+7. Calls `build_investor_report.py` (unless `--skip-reports` /
+   `SKIP_REPORTS=1` or risk was skipped), writing per-BDC briefs
+   under `reports/<DATE>/briefs/` plus `index.md` / `index.json`.
+8. **If `--send-alerts`**, invokes `send_risk_alerts.py` against the
    day's reports dir. `--digest` collapses to one email;
    `--alert-dry-run` composes without sending.
-8. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
+9. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
 
 ## Environment / knobs
 
@@ -236,6 +274,7 @@ Behavior:
 | `SKIP_PARSE` | `0` | Set to `1` to skip the XBRL parse step (ingest only). |
 | `SKIP_PORTFOLIO` | `0` | Set to `1` to skip the SoI extraction step. |
 | `SKIP_RISK` | `0` | Set to `1` to skip the risk scoring step. |
+| `SKIP_REPORTS` | `0` | Set to `1` to skip the investor-brief step. |
 | `SEND_ALERTS` | `0` | Set to `1` to email alerts after scoring. |
 | `SEND_DIGEST` | `0` | With `SEND_ALERTS=1`, send one digest instead of per-alert. |
 | `ALERT_DRY_RUN` | `0` | Compose emails but don't touch SMTP. |
@@ -251,10 +290,19 @@ keyed by URL. Delete that directory to force a cold pull, or pass
 
 ## What's next
 
-`build_investor_report.py` (weekly HTML + PDF digest per BDC, reusing
-the SMTP layer in `send_risk_alerts.py`) is the remaining big piece.
-A v1 of `extract_portfolio.py` adding a full HTML-table SoI parser
-will extend non-accrual coverage from 2/52 BDCs to ~90%. See
-[`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for module
-contracts and [`AGENTS.md`](../AGENTS.md) for the full script
-roadmap.
+Two obvious follow-ups now that v0 briefs are live:
+
+1. A v1 of `extract_portfolio.py` that adds an HTML-table SoI
+   fallback — most BDCs describe non-accrual investments in narrative
+   + tabular form rather than structured XBRL, so a lightweight parser
+   here would lift non-accrual coverage from 2/52 BDCs to ~90% and
+   also unlock `loan_type_mix` + `top_issuers` signals.
+2. A weekly HTML / PDF digest of the `index.md` + top-risk briefs,
+   reusing the SMTP layer in `send_risk_alerts.py`. The markdown
+   emitted today already renders cleanly through any markdown→HTML
+   converter, so this is mostly plumbing.
+
+See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for module
+contracts, [`docs/INVESTOR_REPORT.md`](../docs/INVESTOR_REPORT.md)
+for the brief schema, and [`AGENTS.md`](../AGENTS.md) for the full
+script roadmap.
