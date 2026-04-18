@@ -7,15 +7,17 @@
 #   2. Download recent 10-K / 10-Q / 8-K for each BDC.
 #   3. Parse XBRL company facts -> canonical metrics (NAV, NII, leverage,
 #      asset coverage, PIK ratio, fair-value-to-cost, distributions).
+#   4. Score each BDC with the risk engine and emit alert_*.json for
+#      breaches (leverage, NAV decline, dividend coverage, PIK, etc.).
 #
-# Risk scoring, Schedule-of-Investments parsing, and investor-report
-# generation land in future commits (compute_risk.py, extract_portfolio.py,
-# build_investor_report.py).
+# Schedule-of-Investments parsing and investor-report generation land in
+# future commits (extract_portfolio.py, build_investor_report.py).
 #
 # Usage:
 #   scripts/run-daily-pricredit.sh
 #   scripts/run-daily-pricredit.sh --tickers ARCC,MAIN,OBDC
 #   scripts/run-daily-pricredit.sh --skip-parse          # ingest only
+#   scripts/run-daily-pricredit.sh --skip-risk           # ingest+parse, no scoring
 #   FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
 #
 # Environment:
@@ -25,6 +27,8 @@
 #   PUBLIC_ONLY           "1" to skip non-traded BDCs (default: 1)
 #   UNIVERSE_MAX_AGE_H    Refresh bdc_universe.json if older (default: 168h = 7d)
 #   SKIP_PARSE            "1" to skip the XBRL parse step (default: 0)
+#   SKIP_RISK             "1" to skip the risk scoring step (default: 0)
+#   RISK_WEIGHTS          Path to ingest/risk_weights.yaml (default: repo copy)
 # =============================================================================
 
 set -euo pipefail
@@ -46,6 +50,8 @@ LIMIT_PER_FORM="${LIMIT_PER_FORM:-4}"
 PUBLIC_ONLY="${PUBLIC_ONLY:-1}"
 UNIVERSE_MAX_AGE_H="${UNIVERSE_MAX_AGE_H:-168}"
 SKIP_PARSE="${SKIP_PARSE:-0}"
+SKIP_RISK="${SKIP_RISK:-0}"
+RISK_WEIGHTS="${RISK_WEIGHTS:-$ROOT/ingest/risk_weights.yaml}"
 
 # Flag parsing — anything not recognized here is forwarded to fetch_filings.py.
 fetch_passthrough=()
@@ -53,6 +59,8 @@ for arg in "$@"; do
   case "$arg" in
     --skip-parse)     SKIP_PARSE=1 ;;
     --no-skip-parse)  SKIP_PARSE=0 ;;
+    --skip-risk)      SKIP_RISK=1 ;;
+    --no-skip-risk)   SKIP_RISK=0 ;;
     *)                fetch_passthrough+=("$arg") ;;
   esac
 done
@@ -137,11 +145,42 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 4. Summary.
+# 4. Score each BDC with the risk engine and emit alert_*.json files.
+# -----------------------------------------------------------------------------
+if [[ "$SKIP_RISK" != "1" && "$SKIP_PARSE" != "1" ]]; then
+  risk_args=(--weights "$RISK_WEIGHTS"
+             --extracted "$ROOT/extracted"
+             --reports "$ROOT/reports"
+             --universe "$UNIVERSE"
+             --date "$DATE"
+             --force)
+  for arg in "${fetch_passthrough[@]}"; do
+    case "$arg" in
+      --tickers|--ciks|--ticker)
+        risk_args+=("$arg") ;;
+      -*) ;;
+      *)  risk_args+=("$arg") ;;
+    esac
+  done
+
+  log "scoring risk: compute_risk.py ${risk_args[*]}"
+  "$PY" "$SCRIPT_DIR/compute_risk.py" "${risk_args[@]}" >>"$LOG" 2>&1 \
+    || log "compute_risk.py exited non-zero (continuing)"
+elif [[ "$SKIP_RISK" == "1" ]]; then
+  log "SKIP_RISK=1 -> skipping risk scoring"
+else
+  log "parse step skipped -> risk scoring also skipped (needs extracted/*/facts/summary.json)"
+fi
+
+# -----------------------------------------------------------------------------
+# 5. Summary.
 # -----------------------------------------------------------------------------
 total_filings=$(find "$ROOT/filings" -maxdepth 3 -name meta.json 2>/dev/null | wc -l | tr -d ' ')
 fresh_today=$(find "$ROOT/filings" -maxdepth 3 -name meta.json -newermt "$DATE" 2>/dev/null | wc -l | tr -d ' ')
 total_parsed=$(find "$ROOT/extracted" -maxdepth 3 -name summary.json 2>/dev/null | wc -l | tr -d ' ')
+total_scored=$(find "$LOG_DIR" -maxdepth 1 -name 'risk_*.json' ! -name 'risk_summary.json' 2>/dev/null | wc -l | tr -d ' ')
+total_alerts=$(find "$LOG_DIR" -maxdepth 1 -name 'alert_*.json' 2>/dev/null | wc -l | tr -d ' ')
 log "filings on disk: total=$total_filings fetched_today=$fresh_today"
 log "BDCs parsed: $total_parsed (see $LOG_DIR/parse_summary.json)"
+log "BDCs scored: $total_scored; risk alerts emitted: $total_alerts"
 log "PriCredit daily run done. Log: $LOG"

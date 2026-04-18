@@ -94,12 +94,36 @@ Canonical metrics and the tag priority list live in
 [`docs/XBRL_CONCEPT_MAP.md`](../docs/XBRL_CONCEPT_MAP.md) for the
 full catalog and extension procedure.
 
-## 4. Daily orchestrator
+## 4. Score risk
 
 ```bash
-scripts/run-daily-pricredit.sh                                # all BDCs, default forms + parse
+scripts/compute_risk.py --tickers ARCC,MAIN,OBDC --print     # score + stderr audit
+scripts/compute_risk.py --date 2026-04-18 --force             # pinned run date, overwrite
+scripts/compute_risk.py --weights ingest/risk_weights.yaml    # alternate config
+```
+
+Consumes `extracted/<cik>/facts/summary.json` and writes:
+
+| File | Contents |
+|------|----------|
+| `reports/<DATE>/risk_<ticker>.json` | Per-BDC scorecard: composite, band, per-factor raw/score/weight/contribution, curve used, fired alerts. |
+| `reports/<DATE>/risk_summary.json` | Universe roll-up sorted by composite descending, with band counts. |
+| `reports/<DATE>/alert_RISK-<ticker>-*.json` | One file per firing alert rule (idvault-compatible schema). |
+
+The score model, curves, and alert rules are defined in
+[`../ingest/risk_weights.yaml`](../ingest/risk_weights.yaml); the
+methodology doc lives at
+[`../docs/RISK_MODEL.md`](../docs/RISK_MODEL.md). Factors are
+piecewise-linear; missing factors are excluded (not imputed) and
+weights renormalize over the factors we had data for.
+
+## 5. Daily orchestrator
+
+```bash
+scripts/run-daily-pricredit.sh                                # ingest + parse + risk
 scripts/run-daily-pricredit.sh --tickers ARCC,MAIN            # drill-down
 scripts/run-daily-pricredit.sh --skip-parse                   # ingest only
+scripts/run-daily-pricredit.sh --skip-risk                    # ingest + parse, no scoring
 FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
 ```
 
@@ -111,7 +135,10 @@ Behavior:
 3. Calls `fetch_filings.py` with the configured forms + limits.
 4. Calls `parse_filings.py` (unless `--skip-parse` / `SKIP_PARSE=1`),
    writing a run summary to `reports/<DATE>/parse_summary.json`.
-5. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
+5. Calls `compute_risk.py` (unless `--skip-risk` / `SKIP_RISK=1` or
+   parse was skipped), writing per-BDC scorecards, `risk_summary.json`,
+   and one `alert_*.json` per firing rule into `reports/<DATE>/`.
+6. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
 
 ## Environment / knobs
 
@@ -124,6 +151,8 @@ Behavior:
 | `PUBLIC_ONLY` | `1` | Skip BDCs that never became publicly traded. |
 | `UNIVERSE_MAX_AGE_H` | `168` | Refresh universe if older than this many hours. |
 | `SKIP_PARSE` | `0` | Set to `1` to skip the XBRL parse step (ingest only). |
+| `SKIP_RISK` | `0` | Set to `1` to skip the risk scoring step. |
+| `RISK_WEIGHTS` | `ingest/risk_weights.yaml` | Path to the risk engine config. |
 
 ## On-disk cache
 
@@ -134,8 +163,11 @@ keyed by URL. Delete that directory to force a cold pull, or pass
 
 ## What's next
 
-`extract_portfolio.py` (Schedule of Investments), `compute_risk.py`
-(heuristic risk score), and `build_investor_report.py` land in
-follow-up commits. See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
-for module contracts and [`AGENTS.md`](../AGENTS.md) for the full
-script roadmap.
+`extract_portfolio.py` (Schedule of Investments — adds non-accrual %
+and industry HHI as risk factors) and `build_investor_report.py`
+land in follow-up commits. A risk-alert email dispatcher that reuses
+`idvault/scripts/send_warnings.py` is a trivial port thanks to the
+shared `alert_*.json` schema. See
+[`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for module
+contracts and [`AGENTS.md`](../AGENTS.md) for the full script
+roadmap.

@@ -1,0 +1,171 @@
+# PriCredit Risk Engine — weights, scoring curves, and alert thresholds.
+#
+# Consumed by scripts/compute_risk.py. Edit freely; structure is stable.
+#
+# Philosophy:
+#   * Every factor converts one metric into a 0-100 sub-score via a
+#     piecewise-linear curve. Anchor points are hand-picked with a
+#     BDC-specific rationale (see docs/RISK_MODEL.md).
+#   * The composite is the weight-normalized average of the factors
+#     we had data for. Missing inputs are dropped, weights renormalize.
+#   * Alerts are rule-based and fire independently of the composite,
+#     so a single critical breach (e.g., asset_coverage < 1.50) is
+#     surfaced even if other factors are excellent.
+
+version: "v1"
+
+bands:
+  # Upper bound (exclusive of next band's lower bound).
+  low:      {max: 25,  label: "low"}
+  medium:   {max: 50,  label: "medium"}
+  high:     {max: 75,  label: "high"}
+  critical: {max: 101, label: "critical"}
+
+factors:
+
+  # --- Regulatory / leverage ------------------------------------------
+  asset_coverage:
+    weight: 2.0
+    source: latest.asset_coverage_ratio
+    direction: higher_is_better
+    # BDC regulatory floor is 1.50 (150%) for most; at 2.00 a BDC has
+    # meaningful headroom. Breach -> instant critical alert.
+    curve:
+      - [2.00,   0]
+      - [1.80,  20]
+      - [1.65,  40]
+      - [1.55,  60]
+      - [1.50,  80]
+      - [0.00, 100]
+    # If the BDC doesn't tag asset_coverage_ratio, fall back to the
+    # debt/equity derivation. Thresholds picked to approximate the
+    # same risk signal.
+    fallback:
+      source: derived.leverage_debt_to_equity
+      direction: lower_is_better
+      curve:
+        - [0.70,   0]
+        - [0.90,  20]
+        - [1.10,  40]
+        - [1.30,  60]
+        - [1.50,  80]
+        - [9.99, 100]
+
+  # --- Mark-to-market -------------------------------------------------
+  fair_value_to_cost:
+    weight: 1.0
+    source: derived.fair_value_to_cost
+    direction: higher_is_better
+    # <1.00 means unrealized losses on the portfolio; deep deterioration
+    # is a leading credit signal.
+    curve:
+      - [1.05,   0]
+      - [1.00,  20]
+      - [0.98,  40]
+      - [0.95,  60]
+      - [0.90,  80]
+      - [0.00, 100]
+
+  # --- Income quality -------------------------------------------------
+  pik_income_ratio:
+    weight: 1.0
+    source: derived.pik_income_ratio
+    direction: lower_is_better
+    # PIK = paper interest/dividends. Higher = cash-light income,
+    # harder to sustain distributions, more restructurings.
+    curve:
+      - [0.05,   0]
+      - [0.10,  25]
+      - [0.15,  50]
+      - [0.20,  75]
+      - [1.00, 100]
+
+  dividend_coverage:
+    weight: 1.5
+    source: derived.dividend_coverage_nii_over_divs
+    direction: higher_is_better
+    # <1.00 implies the BDC is paying out of capital, not earnings.
+    curve:
+      - [1.20,   0]
+      - [1.10,  20]
+      - [1.00,  40]
+      - [0.95,  70]
+      - [0.00, 100]
+
+  # --- NAV trend ------------------------------------------------------
+  nav_yoy:
+    weight: 1.5
+    source: nav_trend.yoy.pct_change
+    direction: higher_is_better
+    # YoY NAV erosion is the clearest structural red flag.
+    curve:
+      - [ 0.05,   0]
+      - [ 0.02,  20]
+      - [ 0.00,  40]
+      - [-0.02,  60]
+      - [-0.05,  80]
+      - [-1.00, 100]
+
+  nav_qoq:
+    weight: 1.0
+    source: nav_trend.qoq.pct_change
+    direction: higher_is_better
+    # Short-horizon volatility; less structural than YoY but noisy
+    # enough to catch early deterioration between annual filings.
+    curve:
+      - [ 0.02,   0]
+      - [ 0.00,  25]
+      - [-0.02,  50]
+      - [-0.04,  75]
+      - [-1.00, 100]
+
+# Alert rules — fire independently of the composite score. Each rule
+# emits a reason string that matches ingest/notifications.yaml's
+# `include_reasons` filter so the email dispatcher picks them up.
+alerts:
+
+  leverage_breach:
+    severity: critical
+    group: leverage
+    description: "Asset coverage at or below the 150% BDC regulatory floor."
+    any_of:
+      - {source: latest.asset_coverage_ratio, op: "<=", value: 1.50}
+      # Derived fallback, only considered when asset_coverage is absent.
+      - {source: derived.leverage_debt_to_equity,
+         op: ">=", value: 1.50,
+         requires_missing: latest.asset_coverage_ratio}
+
+  leverage_elevated:
+    severity: high
+    group: leverage
+    description: "Leverage within 5% of the 150% regulatory floor."
+    any_of:
+      - {source: latest.asset_coverage_ratio, op: "<", value: 1.58}
+      - {source: derived.leverage_debt_to_equity,
+         op: ">=", value: 1.30,
+         requires_missing: latest.asset_coverage_ratio}
+
+  dividend_coverage_shortfall:
+    severity: high
+    description: "NII does not cover paid distributions (returning capital)."
+    any_of:
+      - {source: derived.dividend_coverage_nii_over_divs, op: "<", value: 1.00}
+
+  nav_decline:
+    severity: medium
+    description: "NAV per share declining meaningfully (QoQ or YoY)."
+    any_of:
+      - {source: nav_trend.yoy.pct_change, op: "<=", value: -0.03}
+      - {source: nav_trend.qoq.pct_change, op: "<=", value: -0.02}
+
+  pik_overreliance:
+    severity: medium
+    description: "PIK share of investment income elevated; cash-light earnings."
+    any_of:
+      - {source: derived.pik_income_ratio, op: ">=", value: 0.20}
+
+  unrealized_loss:
+    severity: medium
+    description: "Portfolio fair value below cost by >3%."
+    any_of:
+      - {source: derived.fair_value_to_cost, op: "<", value: 0.97}

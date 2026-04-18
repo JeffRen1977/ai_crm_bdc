@@ -30,17 +30,18 @@ Three modules share one ingestion spine.
                    +-----------+-----------+
                                |
                                v
-                      extracted/<cik>/<accession>/
+                      extracted/<cik>/facts/
                                |
          +---------------------+---------------------+
          |                     |                     |
          v                     v                     v
   compute_risk.py       build_investor_       build_portfolio_
-                        report.py             view.py
+     ✅ v0              report.py             view.py
          |                     |                     |
          v                     v                     v
   reports/YYYY-MM-DD/   reports/investors/   reports/portfolio/
      risk_*.json           email bodies         aggregated views
+     alert_*.json
          |                                           |
          +-----------+---------------+---------------+
                      v               v
@@ -89,26 +90,41 @@ transparent, documented, and easy to recompute.
 
 **Inputs.** Outputs from Portfolio Management + Investor Reporting.
 
-**v1 score (heuristic, documented as such):**
+**v1 score (heuristic, piecewise-linear).** Each factor converts one
+raw metric to a 0-100 sub-score via threshold curves declared in
+`ingest/risk_weights.yaml`; composite is the weight-renormalized
+average of factors we had data for. Missing factors are excluded
+rather than penalized. Factors shipped in v0:
 
-```
-score =
-    w1 * z(leverage_ratio)                  # higher leverage -> worse
-  + w2 * z(non_accrual_pct_fair_value)      # higher -> worse
-  + w3 * z(pik_income_ratio)                # higher -> worse
-  + w4 * z(-nav_per_share_qoq_trend)        # declining NAV -> worse
-  + w5 * z(industry_hhi)                    # more concentrated -> worse
-  + w6 * z(-dividend_coverage_ratio)        # < 1 coverage -> worse
-```
+| Factor              | Input                                | Weight |
+|---------------------|--------------------------------------|--------|
+| `asset_coverage`    | `latest.asset_coverage_ratio` (fallback: `derived.leverage_debt_to_equity`) | 2.0 |
+| `fair_value_to_cost`| `derived.fair_value_to_cost`         | 1.0    |
+| `pik_income_ratio`  | `derived.pik_income_ratio`           | 1.0    |
+| `dividend_coverage` | `derived.dividend_coverage_nii_over_divs` | 1.5 |
+| `nav_yoy`           | `nav_trend.yoy.pct_change`           | 1.5    |
+| `nav_qoq`           | `nav_trend.qoq.pct_change`           | 1.0    |
 
-Weights are configurable in `ingest/risk_weights.yaml` (future);
-defaults are defensibly equal until we backtest.
+Composite score → band: `low` (0–24), `medium` (25–49), `high` (50–74),
+`critical` (75–100). Non-accrual % and industry HHI land when
+`extract_portfolio.py` ships (Schedule of Investments parsing).
+
+**Alert rules** fire independently of the composite. Currently shipped:
+`leverage_breach` (critical), `leverage_elevated` (high),
+`dividend_coverage_shortfall` (high), `nav_decline` (medium),
+`pik_overreliance` (medium), `unrealized_loss` (medium). Rules in the
+same `group` dedupe to the highest severity that fired.
+
+Full methodology + curves + rationale:
+[`RISK_MODEL.md`](RISK_MODEL.md).
 
 **Outputs.**
-- `reports/<DATE>/risk_<ticker>.json` — per-BDC detail.
-- `reports/<DATE>/risk_summary.json` — portfolio roll-up.
-- `reports/<DATE>/risk_alerts.json` — BDCs whose score crossed a
-  threshold or whose non-accrual % moved materially.
+- `reports/<DATE>/risk_<ticker>.json` — per-BDC scorecard with full
+  factor audit (raw value, curve, weight share, contribution).
+- `reports/<DATE>/risk_summary.json` — universe roll-up sorted by score.
+- `reports/<DATE>/alert_RISK-<ticker>-<YYYYMMDD>-NNN.json` — one file
+  per firing alert rule. Shape is compatible with the idvault alert
+  format so the same email dispatcher can consume it.
 
 ## What ships today
 
@@ -119,11 +135,14 @@ defaults are defensibly equal until we backtest.
   `extracted/<cik>/facts/{timeseries,latest,resolved,summary}.json`,
   with 10-K/A restatements auto-superseding originals. See
   [`XBRL_CONCEPT_MAP.md`](XBRL_CONCEPT_MAP.md).
+- **Risk engine** — `compute_risk.py` + `ingest/risk_weights.yaml`.
+  Reads `extracted/<cik>/facts/summary.json`, emits per-BDC scorecards,
+  a universe roll-up, and one `alert_*.json` per firing rule. See
+  [`RISK_MODEL.md`](RISK_MODEL.md).
 
 Still to build: `extract_portfolio.py` (Schedule of Investments),
-`compute_risk.py` (heuristic score), `build_investor_report.py`,
-`send_reports.py`. See the top-level [`README.md`](../README.md)
-for current runnable CLIs.
+`build_investor_report.py`, `send_reports.py`. See the top-level
+[`README.md`](../README.md) for current runnable CLIs.
 
 ## Disclaimer
 
