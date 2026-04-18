@@ -1,26 +1,36 @@
-# PriCredit — report distribution routing (v0 placeholder).
+# PriCredit — alert / report distribution routing.
 #
-# Consumed by scripts/send_reports.py (future). SMTP credentials stay
-# in ~/.pricredit-env; this file only holds non-sensitive routing.
+# Consumed by scripts/send_risk_alerts.py (alert_*.json dispatcher)
+# and, in the future, scripts/send_reports.py (investor bundles).
+# SMTP credentials stay in ~/.pricredit-env; this file only holds
+# non-sensitive routing.
 
 email:
   to:
     - jianfengren.sd@gmail.com
   cc: []
   bcc: []
-  from: null
+  from: null               # null -> falls back to SMTP_FROM / SMTP_USER
   subject_prefix: "[PriCredit]"
 
-  # Risk-alert filter: only email when a BDC crosses this tier.
-  # Values: "low" | "medium" | "high". Use "low" to send everything
-  # including routine investor reports.
+  # Only email alerts whose severity is at or above this tier.
+  # Values: "low" | "medium" | "high" | "critical".
+  # Default "medium" hides routine noise; set to "low" in dev to see
+  # everything.
   min_severity_tier: medium
 
-  # Only include alerts whose reason matches. Empty = all.
+  # Only include alerts whose `alert_reason` is in this list.
+  # Empty list / omit the key -> all reasons pass.
+  # Reasons match the rule names in ingest/risk_weights.yaml.
   include_reasons:
-    - nav_decline
-    - leverage_breach
-    - non_accrual_spike
-    - dividend_coverage_shortfall
+    - leverage_breach             # asset coverage <= 1.50 (regulatory floor)
+    - leverage_elevated           # asset coverage < 1.58
+    - dividend_coverage_shortfall # NII < distributions
+    - nav_decline                 # NAV YoY <= -3% or QoQ <= -2%
+    - pik_overreliance            # PIK share of income >= 20%
+    - unrealized_loss             # FV/Cost < 0.97
+    # Future (from extract_portfolio.py):
+    # - non_accrual_spike
+    # - industry_concentration
 
-  attach_json: true
+  attach_json: true          # attach raw alert_*.json to the email

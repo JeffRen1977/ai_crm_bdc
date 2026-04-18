@@ -139,6 +139,12 @@ Full methodology + curves + rationale:
   Reads `extracted/<cik>/facts/summary.json`, emits per-BDC scorecards,
   a universe roll-up, and one `alert_*.json` per firing rule. See
   [`RISK_MODEL.md`](RISK_MODEL.md).
+- **Risk alert dispatcher** — `send_risk_alerts.py` +
+  `send-risk-alerts.sh`. Routes `alert_RISK-*.json` to email via the
+  recipients / severity filter in `ingest/notifications.yaml`.
+  Supports per-alert or `--digest` mode, dry-run, and is idempotent
+  via `reports/<DATE>/.sent/`. The daily orchestrator invokes it
+  with `--send-alerts`.
 
 Still to build: `extract_portfolio.py` (Schedule of Investments),
 `build_investor_report.py`, `send_reports.py`. See the top-level

@@ -117,13 +117,65 @@ methodology doc lives at
 piecewise-linear; missing factors are excluded (not imputed) and
 weights renormalize over the factors we had data for.
 
-## 5. Daily orchestrator
+## 5. Email risk alerts
+
+Alerts emitted by `compute_risk.py` land as
+`reports/<DATE>/alert_RISK-<ticker>-*.json`. The dispatcher reads
+those files, applies the severity / reason filter from
+[`../ingest/notifications.yaml`](../ingest/notifications.yaml), and
+emails the ones that pass via SMTP.
+
+```bash
+# dry-run today's alerts (no SMTP touched)
+scripts/send-risk-alerts.sh --dry-run
+
+# specific date
+scripts/send-risk-alerts.sh 2026-04-18
+
+# one summary email instead of one per alert
+scripts/send-risk-alerts.sh 2026-04-18 --digest
+
+# override recipient (test account)
+scripts/send-risk-alerts.sh 2026-04-18 --to you@example.com --dry-run
+
+# explicit file
+scripts/send-risk-alerts.sh --alert reports/2026-04-18/alert_RISK-ARCC-20260418-001.json --dry-run
+```
+
+Credentials go in `~/.pricredit-env` (never commit):
+
+```bash
+export SMTP_HOST=smtp.gmail.com
+export SMTP_PORT=587
+export SMTP_USER=you@example.com
+export SMTP_PASSWORD=<app password>
+export SMTP_FROM='PriCredit <you@example.com>'      # optional
+# export SMTP_USE_SSL=1                             # if host uses SMTPS:465
+# export SMTP_STARTTLS=0                            # if server negotiates plain
+```
+
+Behavior details:
+- Severity ranking: `low < medium < high < critical`. Alerts below
+  `email.min_severity_tier` are dropped.
+- `email.include_reasons` (list) further restricts which rules get
+  emailed; empty list = all.
+- Idempotency: once SMTP accepts a message, a marker lands in
+  `reports/<DATE>/.sent/<alert_id>.json` and reruns skip it
+  (override with `--force`).
+- `--digest` sends one email summarizing all alerts for the day,
+  attaching `risk_summary.json`. Its own marker is
+  `.sent/digest.json`.
+
+## 6. Daily orchestrator
 
 ```bash
 scripts/run-daily-pricredit.sh                                # ingest + parse + risk
 scripts/run-daily-pricredit.sh --tickers ARCC,MAIN            # drill-down
 scripts/run-daily-pricredit.sh --skip-parse                   # ingest only
 scripts/run-daily-pricredit.sh --skip-risk                    # ingest + parse, no scoring
+scripts/run-daily-pricredit.sh --send-alerts                  # + email alerts (per-alert)
+scripts/run-daily-pricredit.sh --send-alerts --digest         # + one digest email
+scripts/run-daily-pricredit.sh --send-alerts --alert-dry-run  # wire everything, don't send
 FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
 ```
 
@@ -138,7 +190,10 @@ Behavior:
 5. Calls `compute_risk.py` (unless `--skip-risk` / `SKIP_RISK=1` or
    parse was skipped), writing per-BDC scorecards, `risk_summary.json`,
    and one `alert_*.json` per firing rule into `reports/<DATE>/`.
-6. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
+6. **If `--send-alerts`**, invokes `send_risk_alerts.py` against the
+   day's reports dir. `--digest` collapses to one email;
+   `--alert-dry-run` composes without sending.
+7. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
 
 ## Environment / knobs
 
@@ -152,7 +207,11 @@ Behavior:
 | `UNIVERSE_MAX_AGE_H` | `168` | Refresh universe if older than this many hours. |
 | `SKIP_PARSE` | `0` | Set to `1` to skip the XBRL parse step (ingest only). |
 | `SKIP_RISK` | `0` | Set to `1` to skip the risk scoring step. |
+| `SEND_ALERTS` | `0` | Set to `1` to email alerts after scoring. |
+| `SEND_DIGEST` | `0` | With `SEND_ALERTS=1`, send one digest instead of per-alert. |
+| `ALERT_DRY_RUN` | `0` | Compose emails but don't touch SMTP. |
 | `RISK_WEIGHTS` | `ingest/risk_weights.yaml` | Path to the risk engine config. |
+| `SMTP_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_FROM` | — | SMTP credentials (put in `~/.pricredit-env`). |
 
 ## On-disk cache
 
@@ -165,9 +224,8 @@ keyed by URL. Delete that directory to force a cold pull, or pass
 
 `extract_portfolio.py` (Schedule of Investments — adds non-accrual %
 and industry HHI as risk factors) and `build_investor_report.py`
-land in follow-up commits. A risk-alert email dispatcher that reuses
-`idvault/scripts/send_warnings.py` is a trivial port thanks to the
-shared `alert_*.json` schema. See
+land in follow-up commits. The investor report dispatcher will
+reuse the SMTP / routing layer in `send_risk_alerts.py`. See
 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for module
 contracts and [`AGENTS.md`](../AGENTS.md) for the full script
 roadmap.

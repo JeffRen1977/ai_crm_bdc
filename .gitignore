@@ -18,7 +18,10 @@ bdc/bdc_universe_*.json
 bdc/company_tickers.json
 bdc/_cache/
 
-# Per-report send markers (populated by future send_reports.py).
+# Send-idempotency markers (populated by send_risk_alerts.py and,
+# in the future, send_reports.py). reports/ itself is already ignored
+# above, but this makes the intent explicit for when we stop ignoring
+# the whole reports/ tree.
 reports/**/.sent/
 
 # Scratch
