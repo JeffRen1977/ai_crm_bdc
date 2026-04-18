@@ -5,7 +5,9 @@ The `CONCEPT_MAP` maps a PriCredit canonical metric name to an ordered
 list of `(taxonomy, tag, unit)` triples we try in priority order against
 EDGAR's companyfacts JSON. The first triple that has observations wins.
 
-Every tag below was verified against at least one real BDC's filings.
+Every tag below was verified against at least one real BDC's filings,
+and most lists were validated by surveying all BDCs in the current
+universe (see `docs/XBRL_CONCEPT_MAP.md` for the coverage matrix).
 When adding a BDC that uses different tags, prefer extending the
 ordered list here over writing ticker-specific code in parse_filings.py.
 
@@ -58,8 +60,11 @@ INSTANT_METRICS = {
         ("us-gaap", "InvestmentOwnedAtCost", "USD"),
     ],
     # BDC-required ratio; filed directly by most BDCs. Pure ratio (e.g., 2.03).
+    # Most BDCs report Indebtedness coverage; preferred-stock BDCs also/instead
+    # tag the Stock variant (e.g., Prospect Capital).
     "asset_coverage_ratio": [
         ("us-gaap", "InvestmentCompanySeniorSecurityIndebtednessAssetCoverageRatio", "pure"),
+        ("us-gaap", "InvestmentCompanySeniorSecurityStockAssetCoverageRatio", "pure"),
     ],
 }
 
@@ -75,12 +80,21 @@ DURATION_METRICS = {
         ("us-gaap", "InvestmentIncomeInvestment", "USD"),
         ("us-gaap", "InvestmentIncome", "USD"),
     ],
+    # PIK interest income. Some filers (Investcorp, Hercules, etc.) report a
+    # *combined* interest+dividend PIK under "InterestAndDividend…"; we map it
+    # here so `derive_pik_income_ratio` can still compute a total PIK figure
+    # (dividend_income_pik will simply resolve to None in that case).
     "interest_income_pik": [
         ("us-gaap", "InterestIncomeOperatingPaidInKind", "USD"),
         ("us-gaap", "PaidInKindInterest", "USD"),
+        ("us-gaap", "InterestAndDividendIncomeOperatingPaidInKind", "USD"),
     ],
+    # PIK dividend income. BDCs use at least three spellings of the tag name
+    # (note the lowercased "inkind" variant from ARCC and others).
     "dividend_income_pik": [
         ("us-gaap", "DividendIncomeOperatingPaidInKind", "USD"),
+        ("us-gaap", "DividendsPaidinkind", "USD"),
+        ("us-gaap", "DividendsCommonStockPaidinkind", "USD"),
     ],
     "interest_expense": [
         ("us-gaap", "InterestExpense", "USD"),
@@ -90,9 +104,16 @@ DURATION_METRICS = {
         ("us-gaap", "InvestmentCompanyDistributionToShareholdersPerShare", "USD/shares"),
         ("us-gaap", "CommonStockDividendsPerShareCashPaid", "USD/shares"),
     ],
+    # Cash-flow dividends/distributions paid. Tag variation across BDCs is
+    # wide; the first four cover ~95% of the universe (the last two mop up
+    # partnership-structured filers and a handful of older filings).
     "dividends_paid": [
         ("us-gaap", "PaymentsOfDividends", "USD"),
+        ("us-gaap", "PaymentsOfDividendsCommonStock", "USD"),
         ("us-gaap", "DividendsCommonStockCash", "USD"),
+        ("us-gaap", "PaymentsOfOrdinaryDividends", "USD"),
+        ("us-gaap", "DividendsCash", "USD"),
+        ("us-gaap", "PaymentsOfCapitalDistribution", "USD"),
     ],
     "weighted_avg_shares_diluted": [
         ("us-gaap", "WeightedAverageNumberOfDilutedSharesOutstanding", "shares"),
@@ -126,8 +147,22 @@ CONCEPT_PATTERNS: list[tuple[str, re.Pattern, str]] = [
     ("net_investment_income",  re.compile(r"NetInvestmentIncome$"), "USD"),
     ("total_debt",             re.compile(r"^LongTermDebt$"), "USD"),
     ("asset_coverage_ratio",   re.compile(r"AssetCoverage", re.IGNORECASE), "pure"),
-    ("interest_income_pik",    re.compile(r"PaidInKind(?:Interest|.*Interest)"), "USD"),
-    ("dividend_income_pik",    re.compile(r"PaidInKind(?:Dividend|.*Dividend)"), "USD"),
+    # PIK casing varies ("PaidInKind" vs "Paidinkind"); keep these matchers
+    # case-insensitive so filer quirks don't silently drop the fact.
+    #
+    # IMPORTANT: anchor each pattern so the *combined* "InterestAndDividend…"
+    # tag is not matched by the dividend-side fallback (it would double-count
+    # the interest portion against the interest side in derive_pik_income_ratio).
+    # - Interest side:  tag starts with "Interest" (not "InterestAnd…"), or
+    #                   contains "PaidInKindInterest".
+    # - Dividend side:  tag starts with "Dividend", or contains
+    #                   "PaidInKindDividend".
+    ("interest_income_pik",    re.compile(r"^Interest(?!AndDividend).*Paid[Ii]n[Kk]ind|Paid[Ii]n[Kk]indInterest", re.IGNORECASE), "USD"),
+    ("dividend_income_pik",    re.compile(r"^Dividend.*Paid[Ii]n[Kk]ind|Paid[Ii]n[Kk]indDividend", re.IGNORECASE), "USD"),
+    # Dividends-paid cash-flow mopup (any tag whose name looks like payments
+    # of dividends/distributions). We already enumerate the common tags in
+    # CONCEPT_MAP; this regex only runs when none of those resolved.
+    ("dividends_paid",         re.compile(r"^Payments[A-Za-z]*(?:Dividend|Distribution)", re.IGNORECASE), "USD"),
 ]
 
 

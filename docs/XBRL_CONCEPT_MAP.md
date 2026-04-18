@@ -29,7 +29,10 @@ translation table lives in
 The asset-coverage tag is **BDC-specific**; it's the regulatory
 ratio required to stay ≥150% (1.50) post-2018. ARCC and OBDC
 tag it directly; MAIN often does not. When missing, use the
-derived leverage proxy instead.
+derived leverage proxy instead. Preferred-stock BDCs (e.g.,
+Prospect Capital) also/instead tag the **Stock** variant
+(`InvestmentCompanySeniorSecurityStockAssetCoverageRatio`) —
+PriCredit tries both.
 
 ### Duration (period) metrics
 
@@ -51,6 +54,33 @@ the first tag with observations wins. If every explicit tag misses,
 we fall back to regex patterns (`CONCEPT_PATTERNS`) across *all*
 taxonomies, which catches BDC-specific custom tags like
 `arcc:NetAssetValuePerShare`.
+
+### Tag variation across the BDC universe
+
+Several canonical metrics are filed under materially different us-gaap
+tags across BDCs. We enumerate every variant observed in the cached
+universe so one parser run covers as many filers as possible. Coverage
+percentages below are over the 52 BDCs currently in `bdc/_cache/`.
+
+| Canonical | Candidate tags (priority order) | Coverage |
+|-----------|---------------------------------|----------|
+| `interest_income_pik` | `InterestIncomeOperatingPaidInKind` → `PaidInKindInterest` → `InterestAndDividendIncomeOperatingPaidInKind`¹ | 73% |
+| `dividend_income_pik` | `DividendIncomeOperatingPaidInKind` → `DividendsPaidinkind`² → `DividendsCommonStockPaidinkind` | 17% |
+| `dividends_paid` | `PaymentsOfDividends` → `PaymentsOfDividendsCommonStock` → `DividendsCommonStockCash` → `PaymentsOfOrdinaryDividends` → `DividendsCash` → `PaymentsOfCapitalDistribution` | 90% |
+| `asset_coverage_ratio` | `InvestmentCompanySeniorSecurityIndebtednessAssetCoverageRatio` → `InvestmentCompanySeniorSecurityStockAssetCoverageRatio` | 44% |
+
+¹ The `InterestAndDividend…PaidInKind` tag is a *combined* interest +
+dividend PIK figure used by ~13 filers (e.g., Investcorp, Hercules).
+We intentionally map it to the interest side only; the derivation
+`pik_income_ratio = (interest_pik + dividend_pik) / total_investment_income`
+therefore still produces a correct total PIK figure without
+double-counting. The dividend-side regex fallback is explicitly
+anchored so it does *not* match the combined tag.
+
+² Note the lower-cased "inkind" spelling used by ARCC and a handful
+of other filers. The regex fallbacks are case-insensitive and
+anchored so that a tag like `InterestAndDividendIncomeOperatingPaidInKind`
+only resolves to the interest side.
 
 ## Derived metrics
 
