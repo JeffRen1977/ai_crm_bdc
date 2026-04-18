@@ -29,8 +29,9 @@
 | `scripts/_edgar_common.py` | EDGAR HTTP 客户端：合规 UA、10 req/s 限流、429/503 退避、磁盘缓存。 | ✅ v0 |
 | `scripts/discover_bdcs.py` | 经 EDGAR 全文搜索 N-54A（BDC 登记表）+ `company_tickers.json` 生成 `bdc/bdc_universe.json`。 | ✅ v0 |
 | `scripts/fetch_filings.py` | 按 CIK 读取 `submissions.json`，下载指定表单（10-K/10-Q/8-K）。 | ✅ v0 |
-| `scripts/run-daily-pricredit.sh` | **每日编排**：必要时刷新 universe，拉取最新表单。 | ✅ v0（仅 ingest） |
-| `scripts/parse_filings.py` | 10-K/10-Q 财务事实抽取（XBRL facts → JSON）。 | ⏳ 计划 |
+| `scripts/run-daily-pricredit.sh` | **每日编排**：必要时刷新 universe → 拉取最新表单 → 解析 XBRL 事实。 | ✅ v0 |
+| `scripts/parse_filings.py` | 10-K/10-Q XBRL company facts → 规范化 NAV/NII/杠杆/资产覆盖率/PIK 时间序列，支持 10-K/A 重述。详见 [`docs/XBRL_CONCEPT_MAP.md`](docs/XBRL_CONCEPT_MAP.md)。 | ✅ v0 |
+| `scripts/_xbrl_concepts.py` | XBRL 标签 → PriCredit 规范化指标的映射表 + 正则兜底 + 衍生指标（杠杆、公允/成本、PIK 占比、分红覆盖率）。 | ✅ v0 |
 | `scripts/extract_portfolio.py` | Schedule of Investments → 贷款级结构化数据。 | ⏳ 计划 |
 | `scripts/compute_risk.py` | 风险评分（杠杆、非权责发生率、PIK%、NAV 趋势）。 | ⏳ 计划 |
 | `scripts/build_investor_report.py` | 客户端投资人报告合成。 | ⏳ 计划 |

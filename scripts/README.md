@@ -71,21 +71,47 @@ Filings land at `filings/<cik>/<accession>/` with:
 - `meta.json` — our summary (form, dates, URLs, whether primary doc saved)
 - `<primary_document>` — the document itself (usually HTML or PDF)
 
-## 3. Daily orchestrator
+## 3. Parse XBRL company facts
 
 ```bash
-scripts/run-daily-pricredit.sh                                # all BDCs, default forms
+scripts/parse_filings.py --ticker ARCC --print-latest        # one BDC, verbose
+scripts/parse_filings.py --tickers ARCC,MAIN,OBDC            # subset
+scripts/parse_filings.py                                     # all publicly_traded
+scripts/parse_filings.py --force                             # ignore 20h freshness
+```
+
+Outputs per BDC, under `extracted/<cik>/facts/`:
+
+| File | Contents |
+|------|----------|
+| `timeseries.json` | Full history per canonical metric, dedup'd so 10-K/A restatements supersede originals. |
+| `latest.json` | Most recent observation per metric. |
+| `resolved.json` | Which XBRL tag each canonical metric resolved to (audit trail). |
+| `summary.json` | One-page snapshot: latest values + derived ratios + NAV QoQ/YoY trend + disclaimer. |
+
+Canonical metrics and the tag priority list live in
+[`_xbrl_concepts.py`](_xbrl_concepts.py); see
+[`docs/XBRL_CONCEPT_MAP.md`](../docs/XBRL_CONCEPT_MAP.md) for the
+full catalog and extension procedure.
+
+## 4. Daily orchestrator
+
+```bash
+scripts/run-daily-pricredit.sh                                # all BDCs, default forms + parse
 scripts/run-daily-pricredit.sh --tickers ARCC,MAIN            # drill-down
+scripts/run-daily-pricredit.sh --skip-parse                   # ingest only
 FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
 ```
 
 Behavior:
 
 1. Refuses to run unless `PRICREDIT_UA_EMAIL` is set.
-2. Refreshes `bdc/bdc_universe.json` if it's older than
+2. Refreshes `bdc/bdc_universe.json` if older than
    `UNIVERSE_MAX_AGE_H` (default 168h / 7 days) or missing.
 3. Calls `fetch_filings.py` with the configured forms + limits.
-4. Writes a log to `reports/<YYYY-MM-DD>/pricredit.log`.
+4. Calls `parse_filings.py` (unless `--skip-parse` / `SKIP_PARSE=1`),
+   writing a run summary to `reports/<DATE>/parse_summary.json`.
+5. Log goes to `reports/<YYYY-MM-DD>/pricredit.log`.
 
 ## Environment / knobs
 
@@ -97,6 +123,7 @@ Behavior:
 | `LIMIT_PER_FORM` | `4` | Recent filings kept per form per BDC. |
 | `PUBLIC_ONLY` | `1` | Skip BDCs that never became publicly traded. |
 | `UNIVERSE_MAX_AGE_H` | `168` | Refresh universe if older than this many hours. |
+| `SKIP_PARSE` | `0` | Set to `1` to skip the XBRL parse step (ingest only). |
 
 ## On-disk cache
 
@@ -107,7 +134,8 @@ keyed by URL. Delete that directory to force a cold pull, or pass
 
 ## What's next
 
-`parse_filings.py`, `extract_portfolio.py`, `compute_risk.py`, and
-`build_investor_report.py` land in follow-up commits. See
-[`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for contracts and
-[`AGENTS.md`](../AGENTS.md) for the full script roadmap.
+`extract_portfolio.py` (Schedule of Investments), `compute_risk.py`
+(heuristic risk score), and `build_investor_report.py` land in
+follow-up commits. See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
+for module contracts and [`AGENTS.md`](../AGENTS.md) for the full
+script roadmap.

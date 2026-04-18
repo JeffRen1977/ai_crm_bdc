@@ -25,8 +25,8 @@ Three modules share one ingestion spine.
                                |
                                v
                    +-----------+-----------+
-                   |   parse_filings.py    |      (future)
-                   |  extract_portfolio.py |
+                   |   parse_filings.py    |      ✅ v0
+                   |  extract_portfolio.py |      (future)
                    +-----------+-----------+
                                |
                                v
@@ -112,10 +112,18 @@ defaults are defensibly equal until we backtest.
 
 ## What ships today
 
-Only the ingestion spine — the two grey boxes at the top. Everything
-else is stubbed in this doc so the direction is legible; follow-up
-commits implement each module. See the top-level
-[`README.md`](../README.md) for current runnable scripts.
+- **Ingestion spine** — `_edgar_common.py`, `discover_bdcs.py`,
+  `fetch_filings.py`, `run-daily-pricredit.sh` (top grey boxes).
+- **XBRL parsing** — `parse_filings.py` + `_xbrl_concepts.py`.
+  Produces per-BDC canonical time series under
+  `extracted/<cik>/facts/{timeseries,latest,resolved,summary}.json`,
+  with 10-K/A restatements auto-superseding originals. See
+  [`XBRL_CONCEPT_MAP.md`](XBRL_CONCEPT_MAP.md).
+
+Still to build: `extract_portfolio.py` (Schedule of Investments),
+`compute_risk.py` (heuristic score), `build_investor_report.py`,
+`send_reports.py`. See the top-level [`README.md`](../README.md)
+for current runnable CLIs.
 
 ## Disclaimer
 
