@@ -1,0 +1,8 @@
+requests>=2.31,<3
+# Everything below is for upcoming parse/risk modules; safe to install now.
+lxml>=5.1,<6
+beautifulsoup4>=4.12,<5
+pandas>=2.1,<3
+openpyxl>=3.1,<4        # read bdc_list.xlsx if provided
+pyyaml>=6.0,<7
+python-dateutil>=2.8,<3

@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Credentials / local env — never commit
+.env
+.pricredit-env
+
+# Raw & derived EDGAR data — regenerate from source.
+# Keep bdc/README.md and the `bdc/` directory itself tracked so the
+# structure is visible; everything else under the data dirs is transient.
+filings/
+extracted/
+reports/
+bdc/bdc_universe.json
+bdc/bdc_universe_*.json
+bdc/company_tickers.json
+bdc/_cache/
+
+# Per-report send markers (populated by future send_reports.py).
+reports/**/.sent/
+
+# Scratch
+tmp/
+*.tmp

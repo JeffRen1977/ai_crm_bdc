@@ -1,0 +1,26 @@
+# PriCredit — report distribution routing (v0 placeholder).
+#
+# Consumed by scripts/send_reports.py (future). SMTP credentials stay
+# in ~/.pricredit-env; this file only holds non-sensitive routing.
+
+email:
+  to:
+    - jianfengren.sd@gmail.com
+  cc: []
+  bcc: []
+  from: null
+  subject_prefix: "[PriCredit]"
+
+  # Risk-alert filter: only email when a BDC crosses this tier.
+  # Values: "low" | "medium" | "high". Use "low" to send everything
+  # including routine investor reports.
+  min_severity_tier: medium
+
+  # Only include alerts whose reason matches. Empty = all.
+  include_reasons:
+    - nav_decline
+    - leverage_breach
+    - non_accrual_spike
+    - dividend_coverage_shortfall
+
+  attach_json: true
