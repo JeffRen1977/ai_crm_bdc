@@ -34,3 +34,40 @@ email:
     # - industry_concentration
 
   attach_json: true          # attach raw alert_*.json to the email
+
+
+# -----------------------------------------------------------------------------
+# WhatsApp (via OpenClaw gateway).
+#
+# Outbound uses the `openclaw message send --channel whatsapp` CLI, so
+# credentials + session live in ~/.openclaw/openclaw.json — not here.
+# Only non-sensitive routing lives in this file. Recipients are E.164
+# numbers; each number must be in the OpenClaw WhatsApp allowlist for
+# the first send to go through.
+# -----------------------------------------------------------------------------
+whatsapp:
+  enabled: true             # set true to opt-in; run-daily-pricredit.sh
+                             # also needs --send-whatsapp (or SEND_WHATSAPP=1)
+
+  to:
+    - "+18586039367"         # must match ~/.openclaw/openclaw.json
+                             # channels.whatsapp.allowFrom
+  cc: []                     # extra recipients, one message per number
+
+  # Channel-level severity gate. Kept stricter than email by default —
+  # a push notification should mean "act on this now", not "FYI".
+  # Values: "low" | "medium" | "high" | "critical".
+  min_severity_tier: high
+
+  # Like email: empty/omit = all reasons pass.
+  include_reasons: []
+
+  # CLI to invoke. Override via env OPENCLAW_CMD if you installed
+  # openclaw under a different name or path.
+  command: openclaw
+
+  # Timeout per send in seconds. The gateway normally answers in < 2s.
+  timeout_s: 30
+
+  # Brand the subject line of multi-BDC digest messages.
+  subject_prefix: "🏦 PriCredit"
