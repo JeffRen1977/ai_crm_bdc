@@ -57,6 +57,7 @@ Examples
     scripts/fetch_filings.py --max-bdcs 10                    # dev throttle
     scripts/fetch_filings.py --public-only                    # traded BDCs only
     scripts/fetch_filings.py --force                          # re-download everything
+    scripts/fetch_filings.py --include-registration --tickers ARCC --limit-per-form 2
 """
 from __future__ import annotations
 
@@ -87,6 +88,21 @@ DEFAULT_OUT = ROOT / "filings"
 # consume today. Extend via --forms if additional forms (e.g. DEF 14A,
 # N-CSR) become relevant.
 DEFAULT_FORMS = ["10-K", "10-Q", "8-K"]
+
+# BDC registration / prospectus family — fee schedules, investment limits,
+# risk factors (see docs/BDC_PRIMER.md). Not part of DEFAULT_FORMS so the
+# daily universe sweep stays bounded; use --include-registration (or
+# INCLUDE_REGISTRATION=1 in run-daily-pricredit.sh) when building the
+# Investor Reporting / compliance layer. EDGAR matches form strings
+# exactly (N-2/A is distinct from N-2).
+REGISTRATION_FORMS = [
+    "N-2",
+    "N-2/A",
+    "424B2",
+    "424B3",
+    "424B5",
+    "497",
+]
 
 
 def _iter_recent(submissions: dict) -> list[dict]:
@@ -259,6 +275,12 @@ def main() -> int:
                     help="Comma-separated form list (default: 10-K,10-Q,8-K). "
                          "Exact EDGAR form strings; amendments like '10-K/A' "
                          "must be listed explicitly.")
+    ap.add_argument("--include-registration", action="store_true",
+                    help="Append registration/prospectus forms (%s) for fee "
+                         "limits, N-2 disclosures, and 424B prospectuses. "
+                         "Off by default — adds several filings per BDC at "
+                         "the current --limit-per-form."
+                         % ",".join(REGISTRATION_FORMS))
     ap.add_argument("--limit-per-form", type=int, default=4,
                     help="How many most-recent filings per form per BDC "
                          "(default 4 — typically 1 fiscal year of 10-K + "
@@ -299,6 +321,12 @@ def main() -> int:
     # on the CLI; EDGAR itself is case-sensitive and only returns
     # uppercase, so we compare in upper form.
     forms = [f.strip().upper() for f in args.forms.split(",") if f.strip()]
+    if args.include_registration:
+        seen = set(forms)
+        for rf in REGISTRATION_FORMS:
+            if rf not in seen:
+                forms.append(rf)
+                seen.add(rf)
     universe = json.loads(univ_path.read_text(encoding="utf-8"))
     bdcs: list[dict] = universe.get("bdcs") or []
 

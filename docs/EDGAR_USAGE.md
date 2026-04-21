@@ -52,6 +52,12 @@ See the SEC's own index of machine-readable endpoints:
 - Prefer `submissions.json` to enumerate a company's filings; it's
   cheap, cacheable, and contains accession numbers + primary document
   filenames you need to construct archive URLs.
+- **Registration / prospectus** (N-2, 424B2, 497, …) for BDCs are
+  fetched only when you opt in — e.g. `scripts/fetch_filings.py
+  --include-registration` or `INCLUDE_REGISTRATION=1` with
+  `scripts/run-daily-pricredit.sh` — so routine runs stay bounded;
+  downstream parsers for these forms are not wired yet, but the
+  artifacts land under `filings/<cik>/<accession>/` like other forms.
 - For numeric trends (NAV per share, NII, asset coverage), XBRL facts
   are ~10x less work than parsing 10-Q HTML. Use
   `companyfacts` first and fall back to text parsing only for

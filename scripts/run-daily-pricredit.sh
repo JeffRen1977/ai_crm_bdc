@@ -30,10 +30,13 @@
 #   scripts/run-daily-pricredit.sh --send-whatsapp            # + WhatsApp alerts
 #   scripts/run-daily-pricredit.sh --send-whatsapp --digest   # + one digest WhatsApp
 #   FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
+#   INCLUDE_REGISTRATION=1 scripts/run-daily-pricredit.sh --tickers ARCC
+#       # adds N-2 / 424B* / 497 to the fetch list (see fetch_filings.py)
 #
 # Environment:
 #   PRICREDIT_UA_EMAIL    REQUIRED. Real contact email for EDGAR UA.
 #   FORMS                 Default: 10-K,10-Q,8-K
+#   INCLUDE_REGISTRATION  "1" to pass --include-registration (N-2, 424B2/3/5, 497)
 #   LIMIT_PER_FORM        Default: 4
 #   PUBLIC_ONLY           "1" to skip non-traded BDCs (default: 1)
 #   UNIVERSE_MAX_AGE_H    Refresh bdc_universe.json if older (default: 168h = 7d)
@@ -65,6 +68,7 @@ PY="${PYTHON:-$ROOT/.venv/bin/python}"
 [[ -x "$PY" ]] || PY="python3"
 
 FORMS="${FORMS:-10-K,10-Q,8-K}"
+INCLUDE_REGISTRATION="${INCLUDE_REGISTRATION:-0}"
 LIMIT_PER_FORM="${LIMIT_PER_FORM:-4}"
 PUBLIC_ONLY="${PUBLIC_ONLY:-1}"
 UNIVERSE_MAX_AGE_H="${UNIVERSE_MAX_AGE_H:-168}"
@@ -109,7 +113,7 @@ LOG="$LOG_DIR/pricredit.log"
 
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG" >&2; }
 
-log "PriCredit daily run (date=$DATE forms=$FORMS limit_per_form=$LIMIT_PER_FORM)"
+log "PriCredit daily run (date=$DATE forms=$FORMS limit_per_form=$LIMIT_PER_FORM include_registration=$INCLUDE_REGISTRATION)"
 
 # -----------------------------------------------------------------------------
 # 0. Preflight: EDGAR UA must be set.
@@ -142,6 +146,7 @@ fi
 # -----------------------------------------------------------------------------
 extra_args=()
 [[ "$PUBLIC_ONLY" == "1" ]] && extra_args+=("--public-only")
+[[ "$INCLUDE_REGISTRATION" == "1" ]] && extra_args+=("--include-registration")
 
 fetch_cmd=("$PY" "$SCRIPT_DIR/fetch_filings.py"
            --universe "$UNIVERSE"

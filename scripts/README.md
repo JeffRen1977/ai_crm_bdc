@@ -63,6 +63,8 @@ scripts/fetch_filings.py --tickers ARCC,MAIN,OBDC
 scripts/fetch_filings.py --ciks 0001287750,0001396440
 scripts/fetch_filings.py --max-bdcs 5 --force                 # dev
 scripts/fetch_filings.py --public-only                        # traded-only
+# Registration / prospectus (N-2, 424B2/3/5, 497) — opt-in; see REGISTRATION_FORMS in fetch_filings.py
+scripts/fetch_filings.py --include-registration --tickers ARCC --limit-per-form 2
 ```
 
 Filings land at `filings/<cik>/<accession>/` with:
@@ -236,6 +238,7 @@ scripts/run-daily-pricredit.sh --send-alerts                  # + email alerts (
 scripts/run-daily-pricredit.sh --send-alerts --digest         # + one digest email
 scripts/run-daily-pricredit.sh --send-alerts --alert-dry-run  # wire everything, don't send
 FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
+INCLUDE_REGISTRATION=1 scripts/run-daily-pricredit.sh --tickers ARCC
 ```
 
 Behavior:
@@ -243,7 +246,8 @@ Behavior:
 1. Refuses to run unless `PRICREDIT_UA_EMAIL` is set.
 2. Refreshes `bdc/bdc_universe.json` if older than
    `UNIVERSE_MAX_AGE_H` (default 168h / 7 days) or missing.
-3. Calls `fetch_filings.py` with the configured forms + limits.
+3. Calls `fetch_filings.py` with the configured forms + limits (and
+   `--include-registration` when `INCLUDE_REGISTRATION=1`).
 4. Calls `parse_filings.py` (unless `--skip-parse` / `SKIP_PARSE=1`),
    writing a run summary to `reports/<DATE>/parse_summary.json`.
 5. Calls `extract_portfolio.py` (unless `--skip-portfolio` /
@@ -268,6 +272,7 @@ Behavior:
 | `PRICREDIT_UA_EMAIL` | (required) | Contact in EDGAR `User-Agent`. |
 | `PYTHON` | `.venv/bin/python` → `python3` | Python interpreter. |
 | `FORMS` | `10-K,10-Q,8-K` | Forms to download. |
+| `INCLUDE_REGISTRATION` | `0` | Set to `1` to also fetch N-2, N-2/A, 424B2/3/5, 497 (fee limits, prospectus). |
 | `LIMIT_PER_FORM` | `4` | Recent filings kept per form per BDC. |
 | `PUBLIC_ONLY` | `1` | Skip BDCs that never became publicly traded. |
 | `UNIVERSE_MAX_AGE_H` | `168` | Refresh universe if older than this many hours. |
