@@ -5,18 +5,20 @@
 # Pipeline:
 #   1. Refresh the BDC universe if stale.
 #   2. Download recent 10-K / 10-Q / 8-K for each BDC.
-#   3. Parse XBRL company facts -> canonical metrics (NAV, NII, leverage,
+#   3. [opt-in] Extract minimal 8-K item signals (ARCC-first).
+#   4. Parse XBRL company facts -> canonical metrics (NAV, NII, leverage,
 #      asset coverage, PIK ratio, fair-value-to-cost, distributions).
-#   4. Extract Schedule-of-Investments aggregates (industry HHI,
+#   5. Extract Schedule-of-Investments aggregates (industry HHI,
 #      affiliation split, and direct non-accrual % where tagged).
-#   5. Score each BDC with the risk engine and emit alert_*.json for
+#   6. Score each BDC with the risk engine and emit alert_*.json for
 #      breaches (leverage, NAV decline, dividend coverage, PIK,
 #      non-accrual, industry concentration).
-#   6. Build per-BDC investor briefs (markdown + JSON) composed from
+#   7. Build per-BDC investor briefs (markdown + JSON) composed from
 #      summary.json + portfolio.json + risk_<ticker>.json + alert_*.json.
-#   7. [opt-in] Email the day's alerts via scripts/send_risk_alerts.py.
-#   8. [opt-in] Push the day's alerts to WhatsApp via
+#   8. [opt-in] Email the day's alerts via scripts/send_risk_alerts.py.
+#   9. [opt-in] Push the day's alerts to WhatsApp via
 #      scripts/send_whatsapp_alerts.py (uses OpenClaw's linked session).
+#  10. [opt-in] Build Shadow NAV beta estimate from facts + 8-K events.
 #
 # Usage:
 #   scripts/run-daily-pricredit.sh
@@ -32,6 +34,10 @@
 #   FORMS=10-K,10-Q LIMIT_PER_FORM=2 scripts/run-daily-pricredit.sh
 #   INCLUDE_REGISTRATION=1 scripts/run-daily-pricredit.sh --tickers ARCC
 #       # adds N-2 / 424B* / 497 to the fetch list (see fetch_filings.py)
+#   RUN_8K_ITEMS=1 scripts/run-daily-pricredit.sh --tickers ARCC
+#       # runs scripts/extract_8k_items.py (minimal regex-based 8-K items)
+#   RUN_8K_ITEMS=1 RUN_SHADOW_NAV=1 scripts/run-daily-pricredit.sh --tickers ARCC
+#       # builds reports/<DATE>/shadow_nav_ARCC.json after 8-K extraction
 #
 # Environment:
 #   PRICREDIT_UA_EMAIL    REQUIRED. Real contact email for EDGAR UA.
@@ -44,6 +50,14 @@
 #   SKIP_PORTFOLIO        "1" to skip the SoI extraction step (default: 0)
 #   SKIP_RISK             "1" to skip the risk scoring step (default: 0)
 #   SKIP_REPORTS          "1" to skip the investor-brief step (default: 0)
+#   RUN_8K_ITEMS          "1" to run minimal 8-K item extraction (default: 0)
+#   EVENTS8K_CIK          CIK for the 8-K extractor (default: 0001287750 = ARCC)
+#   EVENTS8K_TICKER       Ticker label for summary file (default: ARCC)
+#   EVENTS8K_LIMIT        Max 8-K filings to process (default: 6)
+#   EVENTS8K_FORCE        "1" to rebuild existing events_8k.json outputs
+#   RUN_SHADOW_NAV        "1" to run shadow_nav.py after fetch/8-K step (default: 0)
+#   SHADOW_NAV_CIK        CIK for shadow_nav.py (default: 0001287750 = ARCC)
+#   SHADOW_NAV_TICKER     Ticker label for shadow_nav output file (default: ARCC)
 #   SEND_ALERTS           "1" to email alerts after scoring (default: 0)
 #   SEND_DIGEST           "1" to send one digest email/WhatsApp instead of one-per-alert
 #   ALERT_DRY_RUN         "1" to dry-run the email dispatcher (no SMTP)
@@ -76,6 +90,14 @@ SKIP_PARSE="${SKIP_PARSE:-0}"
 SKIP_PORTFOLIO="${SKIP_PORTFOLIO:-0}"
 SKIP_RISK="${SKIP_RISK:-0}"
 SKIP_REPORTS="${SKIP_REPORTS:-0}"
+RUN_8K_ITEMS="${RUN_8K_ITEMS:-0}"
+EVENTS8K_CIK="${EVENTS8K_CIK:-0001287750}"
+EVENTS8K_TICKER="${EVENTS8K_TICKER:-ARCC}"
+EVENTS8K_LIMIT="${EVENTS8K_LIMIT:-6}"
+EVENTS8K_FORCE="${EVENTS8K_FORCE:-0}"
+RUN_SHADOW_NAV="${RUN_SHADOW_NAV:-0}"
+SHADOW_NAV_CIK="${SHADOW_NAV_CIK:-0001287750}"
+SHADOW_NAV_TICKER="${SHADOW_NAV_TICKER:-ARCC}"
 SEND_ALERTS="${SEND_ALERTS:-0}"
 SEND_DIGEST="${SEND_DIGEST:-0}"
 ALERT_DRY_RUN="${ALERT_DRY_RUN:-0}"
@@ -113,7 +135,7 @@ LOG="$LOG_DIR/pricredit.log"
 
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG" >&2; }
 
-log "PriCredit daily run (date=$DATE forms=$FORMS limit_per_form=$LIMIT_PER_FORM include_registration=$INCLUDE_REGISTRATION)"
+log "PriCredit daily run (date=$DATE forms=$FORMS limit_per_form=$LIMIT_PER_FORM include_registration=$INCLUDE_REGISTRATION run_8k_items=$RUN_8K_ITEMS run_shadow_nav=$RUN_SHADOW_NAV)"
 
 # -----------------------------------------------------------------------------
 # 0. Preflight: EDGAR UA must be set.
@@ -157,6 +179,37 @@ fetch_cmd=("$PY" "$SCRIPT_DIR/fetch_filings.py"
            "${fetch_passthrough[@]}")
 log "fetching filings: ${fetch_cmd[*]}"
 "${fetch_cmd[@]}" >>"$LOG" 2>&1 || log "fetch_filings.py exited non-zero (continuing)"
+
+# -----------------------------------------------------------------------------
+# 2b. [opt-in] Minimal 8-K item extraction (ARCC-first defaults).
+# -----------------------------------------------------------------------------
+if [[ "$RUN_8K_ITEMS" == "1" ]]; then
+  events8k_args=(--filings "$ROOT/filings"
+                 --out "$ROOT/extracted"
+                 --universe "$UNIVERSE"
+                 --cik "$EVENTS8K_CIK"
+                 --ticker "$EVENTS8K_TICKER"
+                 --limit "$EVENTS8K_LIMIT")
+  [[ "$EVENTS8K_FORCE" == "1" ]] && events8k_args+=("--force")
+
+  log "extracting minimal 8-K items: extract_8k_items.py ${events8k_args[*]}"
+  "$PY" "$SCRIPT_DIR/extract_8k_items.py" "${events8k_args[@]}" >>"$LOG" 2>&1 \
+    || log "extract_8k_items.py exited non-zero (continuing)"
+fi
+
+# -----------------------------------------------------------------------------
+# 2c. [opt-in] Shadow NAV beta (ARCC-first defaults).
+# -----------------------------------------------------------------------------
+if [[ "$RUN_SHADOW_NAV" == "1" ]]; then
+  shadow_nav_args=(--extracted "$ROOT/extracted"
+                   --reports "$ROOT/reports"
+                   --date "$DATE"
+                   --cik "$SHADOW_NAV_CIK"
+                   --ticker "$SHADOW_NAV_TICKER")
+  log "building shadow NAV beta: shadow_nav.py ${shadow_nav_args[*]}"
+  "$PY" "$SCRIPT_DIR/shadow_nav.py" "${shadow_nav_args[@]}" >>"$LOG" 2>&1 \
+    || log "shadow_nav.py exited non-zero (continuing)"
+fi
 
 # -----------------------------------------------------------------------------
 # 3. Parse XBRL company facts -> canonical metrics.
@@ -336,10 +389,12 @@ if [[ -d "$LOG_DIR/.sent" ]]; then
   total_whatsapp=$(find "$LOG_DIR/.sent" -maxdepth 1 -name '*.whatsapp.json' 2>/dev/null | wc -l | tr -d ' ')
 fi
 total_portfolios=$(find "$ROOT/extracted" -path '*/portfolio/*/portfolio.json' 2>/dev/null | wc -l | tr -d ' ')
+total_events8k=$(find "$ROOT/extracted" -path '*/events8k/*/events_8k.json' 2>/dev/null | wc -l | tr -d ' ')
 total_briefs=$(find "$LOG_DIR/briefs" -maxdepth 1 -name '*.md' ! -name 'index.md' 2>/dev/null | wc -l | tr -d ' ')
 log "filings on disk: total=$total_filings fetched_today=$fresh_today"
 log "BDCs parsed: $total_parsed (see $LOG_DIR/parse_summary.json)"
 log "BDCs with SoI extracted: $total_portfolios (see $LOG_DIR/portfolio_summary.json)"
+log "8-K event files extracted: $total_events8k"
 log "BDCs scored: $total_scored; risk alerts emitted: $total_alerts; dispatched email=$total_sent whatsapp=$total_whatsapp"
 log "investor briefs: $total_briefs (see $LOG_DIR/briefs/index.md)"
 log "PriCredit daily run done. Log: $LOG"

@@ -176,6 +176,43 @@ into git or upload them as artifacts. See
 [`../docs/INVESTOR_REPORT.md`](../docs/INVESTOR_REPORT.md) for the
 schema contract and rendering rationale.
 
+## 6b. Minimal 8-K item extraction (ARCC-first)
+
+```bash
+# ARCC defaults: CIK 0001287750, latest 6 local 8-K/8-KA filings
+scripts/extract_8k_items.py --print
+
+# explicit selector
+scripts/extract_8k_items.py --cik 0001287750 --ticker ARCC --limit 10 --force --print
+```
+
+Reads already-fetched 8-K primary documents from `filings/<cik>/...` and writes:
+
+| File | Contents |
+|------|----------|
+| `extracted/<cik>/events8k/<accession>/events_8k.json` | Item references (`Item X.XX`), snippets, keyword flags for credit-facility changes and realized gains/losses. |
+| `extracted/<cik>/events8k/<accession>/source.json` | Source filing metadata copied from `meta.json`. |
+| `reports/<DATE>/events8k_summary_<TICKER>.json` | Run summary (attempted/processed/skipped + per-accession status). |
+
+v0 is intentionally heuristic (regex + keyword based) and should be used for
+triage/workflow hints, not as a final legal interpretation of 8-K disclosures.
+
+## 6c. Shadow NAV beta (ARCC-first)
+
+```bash
+# Uses extracted/<cik>/facts/summary.json + extracted/<cik>/events8k/*/events_8k.json
+scripts/shadow_nav.py --cik 0001287750 --ticker ARCC --print
+```
+
+Writes:
+
+| File | Contents |
+|------|----------|
+| `reports/<DATE>/shadow_nav_<TICKER>.json` | Experimental event-adjusted NAV signal with baseline NAV, heuristic adjustments, confidence level, and assumptions. |
+
+This is intentionally conservative and explicitly marked `experimental`.
+It is a workflow signal, not an official NAV replacement.
+
 ## 7. Email risk alerts
 
 Alerts emitted by `compute_risk.py` land as
